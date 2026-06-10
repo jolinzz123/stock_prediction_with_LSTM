@@ -14,25 +14,9 @@ The program accepts a stock ticker symbol and a forecast horizon from
 the user, trains an LSTM model on 2 years of data, evaluates it on a
 held-out test set, and outputs both numerical forecasts and saved charts.
 
-
-HOW TO RUN
-----------
-1. Make sure Python 3.9 or later is installed.
-
-2. Install all required packages by running:
-
-       pip install -r requirements.txt
-
-3. Start the program:
-
-       python main.py
-
-4. Follow the on-screen prompts:
-   - Enter a stock ticker (e.g. AAPL, TSLA, GOOG, MSFT, AMZN)
-   - Enter the number of days to forecast (1–30)
-   - Optionally reuse a previously saved model
-
-5. When the program finishes, charts are saved in the 'assets/' folder.
+The program offers two interfaces:
+  1. Desktop App  — Tkinter GUI window
+  2. Web App      — Flask browser interface with news feed
 
 ========================================================
 HOW TO GET STARTED
