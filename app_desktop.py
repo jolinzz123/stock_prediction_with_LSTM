@@ -214,9 +214,9 @@ class StockPredictorApp:
         ticker = self.ticker_var.get().strip().upper()
         days   = int(self.days_var.get())
 
-        if not ticker or not ticker.isalpha() or len(ticker) > 5:
+        if not ticker or len(ticker) < 1 or len(ticker) > 12:
             messagebox.showerror("Invalid Input",
-                                 "Please enter a valid ticker (1–5 letters, e.g. AAPL).")
+                                 "Please enter a valid ticker (e.g. AAPL, 300750.SZ, 0700.HK).")
             return
 
         self.predict_btn.config(state="disabled")
