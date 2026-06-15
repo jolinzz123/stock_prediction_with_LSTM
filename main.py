@@ -81,7 +81,7 @@ def on_epoch(epoch, total):
     progress_bar.progress(epoch / total)
     status_text.text(f"Epoch {epoch}/{total}")
 
-result = run_prediction(prices, future_days=7, epoch_callback=on_epoch)
+result = run_prediction(df, future_days=7, epoch_callback=on_epoch)
 
 progress_bar.progress(1.0)
 status_text.success("Model training complete!")
@@ -103,7 +103,7 @@ fig2.add_trace(go.Scatter(
 fig2.add_trace(go.Scatter(
     x=test_dates, y=test_preds,
     mode="lines", name="Predicted (test set)",
-    line=dict(color="#FF7F50", width=1.5, dash="dash"),
+    line=dict(color="#FF7F50", width=1.5),
 ))
 fig2.add_vline(
     x=dates[train_end],
