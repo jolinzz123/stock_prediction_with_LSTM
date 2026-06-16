@@ -7,6 +7,93 @@ from datetime import timedelta
 from data_fetcher import fetch_stock_data, get_stock_info
 from predictor import run_prediction
 from news_analyzer import get_news_sentiment, generate_recommendation
+import cache_manager
+
+WATCHLIST = [
+    "AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "TSLA",
+    "TSM", "AMD", "BABA", "PDD", "JD", "BIDU",
+    "SPY", "QQQ", "JPM", "BRK-B", "NFLX", "DIS", "ENPH",
+]
+
+
+@st.cache_data(ttl=900)
+def _load_watchlist():
+    rows = []
+    for t in WATCHLIST:
+        try:
+            df_w = fetch_stock_data(t, period="3mo")
+            info_w = get_stock_info(t)
+            close = df_w["Close"].values.astype(float)
+            prev = close[-2] if len(close) >= 2 else close[-1]
+            curr = close[-1]
+            rows.append({
+                "ticker": t,
+                "name": info_w["name"][:24],
+                "price": curr,
+                "chg": curr - prev,
+                "pct": (curr - prev) / prev * 100,
+                "open": float(df_w["Open"].values[-1]),
+                "high": float(df_w["High"].values[-1]),
+                "low":  float(df_w["Low"].values[-1]),
+                "prev": prev,
+                "close_arr": close,
+            })
+        except Exception:
+            pass
+    return rows
+
+
+def _sparkline_svg(prices, width=120, height=40):
+    if len(prices) < 2:
+        return ""
+    mn, mx = float(prices.min()), float(prices.max())
+    rng = mx - mn if mx != mn else 1.0
+    ys = [(1 - (p - mn) / rng) * (height - 4) + 2 for p in prices]
+    xs = [i * width / (len(prices) - 1) for i in range(len(prices))]
+    color = "#2ECC71" if prices[-1] >= prices[0] else "#FF4B4B"
+    pts = " ".join(f"{x:.1f},{y:.1f}" for x, y in zip(xs, ys))
+    return (
+        f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}">'
+        f'<polyline points="{pts}" fill="none" stroke="{color}" '
+        f'stroke-width="1.5" stroke-linejoin="round"/></svg>'
+    )
+
+
+def _watchlist_html(rows):
+    css = """
+    <style>
+    .wl-table{width:100%;border-collapse:collapse;font-size:13px;}
+    .wl-table th{text-align:right;color:#888;font-weight:500;padding:6px 12px;border-bottom:1px solid #2a2a3a;}
+    .wl-table th:first-child{text-align:left;}
+    .wl-table td{padding:9px 12px;border-bottom:1px solid #16192a;text-align:right;vertical-align:middle;}
+    .wl-table td:first-child{text-align:left;}
+    .wl-table tr:hover td{background:#1a1f2e;}
+    .wl-up{color:#2ECC71;} .wl-dn{color:#FF4B4B;}
+    .wl-tk{font-weight:700;font-size:14px;} .wl-cn{color:#888;font-size:11px;}
+    </style>"""
+    header = (
+        "<table class='wl-table'><thead><tr>"
+        "<th>Name</th><th>Price</th><th>Change</th><th>% Change</th>"
+        "<th>Open</th><th>High</th><th>Low</th><th>Prev</th><th>60D Trend</th>"
+        "</tr></thead><tbody>"
+    )
+    body = ""
+    for r in rows:
+        cls = "wl-up" if r["chg"] >= 0 else "wl-dn"
+        sign = "+" if r["chg"] >= 0 else ""
+        body += (
+            f"<tr>"
+            f"<td><span class='wl-tk'>{r['ticker']}</span><br>"
+            f"<span class='wl-cn'>{r['name']}</span></td>"
+            f"<td>{r['price']:.2f}</td>"
+            f"<td class='{cls}'>{sign}{r['chg']:.2f}</td>"
+            f"<td class='{cls}'>{sign}{r['pct']:.2f}%</td>"
+            f"<td>{r['open']:.2f}</td><td>{r['high']:.2f}</td>"
+            f"<td>{r['low']:.2f}</td><td>{r['prev']:.2f}</td>"
+            f"<td>{r['svg']}</td></tr>"
+        )
+    return css + header + body + "</tbody></table>"
+
 
 st.set_page_config(page_title="Stock Predictor", page_icon="static/favicon.svg", layout="wide")
 
@@ -19,44 +106,84 @@ st.markdown("""
 st.markdown("""
 <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="44" height="44">
-    <rect width="64" height="64" rx="12" fill="#0E1117"/>
+    <rect width="64" height="64" rx="12" fill="#1E2530"/>
     <polyline points="6,48 18,30 28,38 40,18 54,26"
-      fill="none" stroke="#2ECC71" stroke-width="4.5"
+      fill="none" stroke="#ffffff" stroke-width="4"
       stroke-linecap="round" stroke-linejoin="round"/>
-    <circle cx="54" cy="26" r="4" fill="#2ECC71"/>
+    <circle cx="54" cy="26" r="5" fill="#2ECC71"/>
   </svg>
   <span style="font-size:2.4rem; font-weight:700; color:var(--text-color); letter-spacing:-0.5px;">Stock Predictor</span>
 </div>
 """, unsafe_allow_html=True)
 
 # ── Input ──────────────────────────────────────────────
+_prefill  = st.session_state.pop("prefill", "AAPL")
+_auto_run = st.session_state.pop("auto_run", False)
+
 col_input, col_btn = st.columns([4, 1])
 with col_input:
     ticker = st.text_input(
         "Ticker",
-        value="AAPL",
+        value=_prefill,
         placeholder="e.g. AAPL, TSLA, 600519.SS, 000858.SZ",
         label_visibility="collapsed",
     ).strip().upper()
 with col_btn:
-    run = st.button("Predict", type="primary", use_container_width=True)
+    run = st.button("Predict", type="primary", use_container_width=True) or _auto_run
 
 if not run:
-    st.info("Enter a ticker symbol and click Predict.")
+    with st.spinner("Loading market data..."):
+        wl_rows = _load_watchlist()
+
+    if wl_rows:
+        st.markdown("### Watchlist")
+        btn_cols = st.columns(min(len(wl_rows), 10))
+        for i, r in enumerate(wl_rows):
+            with btn_cols[i % 10]:
+                if st.button(r["ticker"], key=f"wl_{r['ticker']}", use_container_width=True):
+                    st.session_state["prefill"] = r["ticker"]
+                    st.session_state["auto_run"] = True
+                    st.rerun()
+
+        display_rows = [{**r, "svg": _sparkline_svg(r["close_arr"][-60:])} for r in wl_rows]
+        st.markdown(_watchlist_html(display_rows), unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
     st.stop()
 
 if not ticker:
     st.error("Please enter a ticker symbol.")
     st.stop()
 
-# ── Fetch data ─────────────────────────────────────────
-with st.spinner(f"Fetching 2-year data for {ticker}..."):
-    try:
-        df = fetch_stock_data(ticker)
-        info = get_stock_info(ticker)
-    except ValueError as e:
-        st.error(str(e))
-        st.stop()
+# ── Load from cache or train ───────────────────────────
+cached = cache_manager.load(ticker)
+
+if cached:
+    df     = cached["df"]
+    info   = cached["info"]
+    result = cached["result"]
+    st.success(f"Loaded from cache — results are ready instantly!")
+else:
+    with st.spinner(f"Fetching 2-year data for {ticker}..."):
+        try:
+            df = fetch_stock_data(ticker)
+            info = get_stock_info(ticker)
+        except ValueError as e:
+            st.error(str(e))
+            st.stop()
+
+    st.markdown("### Training LSTM Model")
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    def on_epoch(epoch, total):
+        progress_bar.progress(epoch / total)
+        status_text.text(f"Epoch {epoch}/{total}")
+
+    result = run_prediction(df, future_days=7, epoch_callback=on_epoch)
+
+    progress_bar.progress(1.0)
+    status_text.success("Model training complete!")
+    cache_manager.save(ticker, {"df": df, "info": info, "result": result})
 
 prices = df["Close"].values.astype(float)
 dates = df.index.tz_localize(None) if df.index.tzinfo else df.index
@@ -72,26 +199,15 @@ m2.metric("Data Points", f"{len(prices)} days")
 m3.metric("2Y High", f"{currency} {prices.max():.2f}")
 m4.metric("2Y Low", f"{currency} {prices.min():.2f}")
 
-# ── Train model ────────────────────────────────────────
-st.markdown("### Training LSTM Model")
-progress_bar = st.progress(0)
-status_text = st.empty()
-
-def on_epoch(epoch, total):
-    progress_bar.progress(epoch / total)
-    status_text.text(f"Epoch {epoch}/{total}")
-
-result = run_prediction(df, future_days=7, epoch_callback=on_epoch)
-
-progress_bar.progress(1.0)
-status_text.success("Model training complete!")
-
 test_preds = result["test_preds"]
+test_preds_7d = np.array(result["test_preds_7d"])
 test_start = result["test_start_idx"]
 train_end = result["train_end_idx"]
 future_preds = result["future_preds"]
 
-test_dates = dates[test_start:]
+# Extend with days 2-7 of the last test window to fill the trailing gap
+test_preds = np.concatenate([test_preds, test_preds_7d[-1, 1:]])
+test_dates = dates[test_start : test_start + len(test_preds)]
 
 # ── News sentiment (fetched early to adjust forecast) ──
 with st.spinner("Fetching news sentiment..."):
@@ -187,43 +303,6 @@ fig2.update_layout(
 )
 st.plotly_chart(fig2, use_container_width=True)
 
-# ── Backtest ───────────────────────────────────────────
-st.divider()
-st.subheader("📊 Backtest: 7-Day Prediction Accuracy")
-
-y_test = np.array(result["y_test"])
-test_preds_7d = np.array(result["test_preds_7d"])
-
-mae_by_day = np.mean(np.abs(test_preds_7d - y_test), axis=0)
-mape_by_day = np.mean(np.abs((test_preds_7d - y_test) / y_test), axis=0) * 100
-actual_dir = np.sign(y_test[:, -1] - y_test[:, 0])
-pred_dir = np.sign(test_preds_7d[:, -1] - test_preds_7d[:, 0])
-dir_acc = np.mean(actual_dir == pred_dir) * 100
-
-b1, b2, b3 = st.columns(3)
-b1.metric("Day-1 MAE", f"{currency} {mae_by_day[0]:.2f}")
-b2.metric("Day-7 MAE", f"{currency} {mae_by_day[6]:.2f}")
-b3.metric("7-Day Direction Accuracy", f"{dir_acc:.1f}%")
-
-fig_bt = go.Figure(go.Bar(
-    x=[f"Day {i+1}" for i in range(7)],
-    y=mae_by_day,
-    marker_color="#FF7F50",
-))
-fig_bt.update_layout(
-    title="Mean Absolute Error by Forecast Day (Test Set)",
-    xaxis_title="Forecast Day", yaxis_title=f"MAE ({currency})",
-    template="plotly_dark", height=300,
-    margin=dict(l=0, r=0, t=40, b=0),
-)
-st.plotly_chart(fig_bt, use_container_width=True)
-
-backtest_df = pd.DataFrame({
-    "Forecast Day": [f"Day {i+1}" for i in range(7)],
-    f"MAE ({currency})": [f"{v:.2f}" for v in mae_by_day],
-    "MAPE (%)": [f"{v:.2f}%" for v in mape_by_day],
-})
-st.dataframe(backtest_df, use_container_width=True, hide_index=True)
 
 # ── News-Based Trend Analysis ──────────────────────────
 st.divider()
