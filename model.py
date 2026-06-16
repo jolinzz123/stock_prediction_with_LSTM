@@ -8,9 +8,9 @@ from tensorflow.keras.layers import LSTM, Dense, Dropout, Input
 from tensorflow.keras.models import Sequential
 from sklearn.preprocessing import MinMaxScaler
 
-LOOKBACK = 36
+LOOKBACK = 60
 FUTURE_DAYS = 7
-EPOCHS = 45
+EPOCHS = 75
 BATCH_SIZE = 16
 
 FEATURE_COLUMNS = [
@@ -200,9 +200,9 @@ def train_residual_lstm(
     model = Sequential(
         [
             Input(shape=(X_seq.shape[1], X_seq.shape[2])),
-            LSTM(48, return_sequences=True),
+            LSTM(64, return_sequences=True),
             Dropout(0.12),
-            LSTM(24),
+            LSTM(32),
             Dense(16, activation="relu"),
             Dense(future_days),
         ]
@@ -243,7 +243,7 @@ def train_predict_arima(close_prices: np.ndarray, future_days: int = FUTURE_DAYS
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        result = ARIMA(close_prices, order=(5, 1, 0)).fit()
+        result = ARIMA(close_prices, order=(5, 1, 2)).fit()
         forecast = result.forecast(steps=future_days)
     return np.asarray(forecast)
 
