@@ -1,4 +1,4 @@
-import streamlit as st
+﻿import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -16,12 +16,55 @@ WATCHLIST = [
     "TSM", "AMD", "BABA", "PDD", "JD", "BIDU",
     "SPY", "QQQ", "JPM", "BRK-B", "NFLX", "DIS", "ENPH",
 ]
+st.set_page_config(page_title="Stock Predictor", page_icon="static/favicon.svg", layout="wide")
+
 
 # Page routing
 if "page" not in st.session_state:
     st.session_state.page = "watchlist"
 if "selected_ticker" not in st.session_state:
     st.session_state.selected_ticker = None
+st.markdown("""
+<style>
+div[data-testid="stHorizontalBlock"]:first-of-type {
+    gap: 2rem !important;
+}
+div[data-testid="stHorizontalBlock"]:first-of-type button {
+    background: transparent !important; border: none !important; box-shadow: none !important;
+    color: #000 !important; font-weight: 400 !important; padding: 8px 12px !important; cursor: pointer !important;
+}
+div[data-testid="stHorizontalBlock"]:first-of-type button:hover {
+    color: #2ECC71 !important;
+}
+div[data-testid="stHorizontalBlock"]:first-of-type button:disabled {
+    color: #2ECC71 !important;
+    border-bottom: 2px solid #2ECC71 !important;
+    opacity: 1 !important;
+}
+div[data-testid="stHorizontalBlock"]:nth-of-type(2) div[data-testid="stButton"] button {
+    background-color: #4CAF50 !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 700 !important;
+    font-size: 1.1rem !important;
+    padding: 0.5rem 2rem !important;
+    transition: all 0.2s ease !important;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.15) !important;
+}
+div[data-testid="stHorizontalBlock"]:nth-of-type(2) div[data-testid="stButton"] button:hover {
+    text-decoration: underline !important;
+    text-underline-offset: 3px !important;
+}
+/* Vertically center the Predict/Compare button with text inputs */
+div[data-testid="stHorizontalBlock"]:nth-of-type(2) div[data-testid="column"]:last-child {
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: flex-end !important;
+}
+.block-container { padding-top: 4rem !important; }
+</style>
+""", unsafe_allow_html=True)
 
 
 @st.cache_data(ttl=900)
@@ -156,9 +199,9 @@ def render_watchlist_page():
         st.session_state.selected_ticker = ticker
         st.session_state.page = "detail"
         st.rerun()
-    # ── Recent searches (dropdown, write in recent search without Predict) ──────
+    # 鈹€鈹€ Recent searches (dropdown, write in recent search without Predict) 鈹€鈹€鈹€鈹€鈹€鈹€
     if st.session_state.recent_searches:
-        recent_line = "  ·  ".join(st.session_state.recent_searches)
+        recent_line = "  路  ".join(st.session_state.recent_searches)
         st.caption(f"Recent: {recent_line}")
 
         picked = st.radio(
@@ -189,7 +232,6 @@ def render_watchlist_page():
 
         display_rows = [{**r, "svg": _sparkline_svg(r["close_arr"][-60:])} for r in wl_rows]
         st.markdown(_watchlist_html(display_rows), unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
 
 
 # Detail page
@@ -498,16 +540,8 @@ def _cached_compare(ticker_a, ticker_b):
 
 
 def render_compare_page():
-    # Back / nav
-    col1, col2, _ = st.columns([1, 1, 6])
-    with col1:
-        if st.button("Market", use_container_width=True, key="nav_back_cp"):
-            st.session_state.page = "watchlist"
-            st.session_state.selected_ticker = None
-            st.rerun()
-    with col2:
-        st.button("Compare", disabled=True, use_container_width=True, key="nav_cp")
-
+    render_ticker_strip()
+    # Title (matches Predictor: title above, nav below)
     st.markdown("""
     <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="44" height="44">
@@ -521,24 +555,34 @@ def render_compare_page():
     </div>
     """, unsafe_allow_html=True)
 
-
+    # Navigation bar (below title, matching Predictor)
+    nav1, nav2, _ = st.columns([1, 1, 6])
+    with nav1:
+        if st.button("Market", use_container_width=True, key="nav_back_cp"):
+            st.session_state.page = "watchlist"
+            st.session_state.selected_ticker = None
+            st.rerun()
+    with nav2:
+        st.button("Compare", disabled=True, use_container_width=True, key="nav_cp")
+    # Selection area -- left-aligned, evenly spaced
     st.markdown("### Select Two Stocks to Compare")
 
-    ticker_list = WATCHLIST[:]
 
-    col_a, col_b, col_go = st.columns([4, 4, 3])
-    with col_a:
-        ticker_a = st.selectbox("Stock A", ticker_list, index=0, key="comp_a")
-    with col_b:
-        ticker_b = st.selectbox("Stock B", ticker_list, index=1, key="comp_b")
-    with col_go:
-        st.write("")
-        st.write("")
-        run_compare = st.button("\u2192 Compare", type="primary", use_container_width=True, key="compare_go")
+
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col1:
+        ticker_a = st.text_input("Stock A", placeholder="e.g. AAPL", key="comp_a").strip().upper()
+    with col2:
+        ticker_b = st.text_input("Stock B", placeholder="e.g. TSLA", key="comp_b").strip().upper()
+    with col3:
+        run_compare = st.button("Compare", type="primary", use_container_width=True, key="compare_go")
 
     if run_compare:
+        if not ticker_a or not ticker_b:
+            st.warning("Please enter both stock tickers.")
+            return
         if ticker_a == ticker_b:
-            st.warning("Please select two different stocks to compare.")
+            st.warning("Please enter two different stocks to compare.")
             return
 
         with st.spinner("Fetching data and running predictions for both stocks (this may take a minute)..."):
@@ -598,27 +642,25 @@ def _display_compare_results(report):
 
     st.divider()
 
-    # Compact recommendation banner row
-    c1, spacer, c2 = st.columns([4, 0.5, 4])
-    with c1:
-        if win_tag:
-            clr = "#2ECC71"
-            txt = f"Recommended: {win_tag}"
-            ic = chr(8593)
-        else:
-            clr = "#F39C12"
-            txt = "Tie - Suggestions below"
-            ic = chr(9878)
-        st.markdown(
-            f"<div style='background:{clr};color:#111;font-size:1.4rem;font-weight:700;"
-            f"padding:0.3em 1em;border-radius:8px;text-align:center;'>"
-            f"{ic} {txt}</div>",
-            unsafe_allow_html=True,
-        )
-    with c2:
-        ca, cb = st.columns(2)
-        ca.metric(f"{ta} Score", f"{report['score_a']:.0f}/{report['total']}", help="Combined weighted score across all dimensions (higher = better)")
-        cb.metric(f"{tb} Score", f"{report['score_b']:.0f}/{report['total']}", help="Combined weighted score across all dimensions (higher = better)")
+    # Recommendation banner (full-width, aligned with divider)
+    if win_tag:
+        clr = "#2ECC71"
+        txt = f"Recommended: {win_tag}"
+        ic = ""
+    else:
+        clr = "#F39C12"
+        txt = "Tie - Suggestions below"
+        ic = chr(9878)
+    st.markdown(
+        f"<div style='background:{clr};color:#111;font-size:1.4rem;font-weight:700;"
+        f"padding:0.5em 1em;border-radius:8px;display:flex;align-items:center;justify-content:center;'>"
+        f"{ic}  {txt}</div>",
+        unsafe_allow_html=True,
+    )
+    ca, cb = st.columns(2)
+    ca.metric(f"{ta} Score", f"{report['score_a']:.0f}/{report['total']}", help="Combined weighted score across all dimensions (higher = better)")
+    cb.metric(f"{tb} Score", f"{report['score_b']:.0f}/{report['total']}", help="Combined weighted score across all dimensions (higher = better)")
+
 
     st.markdown(f"**{report['reason']}**")
 
@@ -661,22 +703,33 @@ def _display_compare_results(report):
         fig = _build_radar_chart(report)
         st.plotly_chart(fig, use_container_width=True)
 
-    # Prediction chart (full width)
+    # Forecast chart (full width) ? historical 30 days + 7-day prediction
     da = report["data_a"]
     db = report["data_b"]
     pa = da.get("predicted_price_7d")
     pb = db.get("predicted_price_7d")
-    if pa and pb:
-        days = list(range(1, 8))
-        pa_pct = [(p / pa[0] - 1) * 100 for p in pa]
-        pb_pct = [(p / pb[0] - 1) * 100 for p in pb]
+    ha = da.get("historical_prices_30d")
+    hb = db.get("historical_prices_30d")
+    if pa and pb and ha and hb:
+        base_a = ha[0]
+        base_b = hb[0]
+        ha_pct = [(p / base_a - 1) * 100 for p in ha]
+        pa_pct = [(p / base_a - 1) * 100 for p in pa]
+        hb_pct = [(p / base_b - 1) * 100 for p in hb]
+        pb_pct = [(p / base_b - 1) * 100 for p in pb]
+        hist_days = list(range(1, len(ha) + 1))
+        pred_days = list(range(len(ha) + 1, len(ha) + len(pa) + 1))
         f2 = go.Figure()
-        f2.add_trace(go.Scatter(x=days, y=pa_pct, mode="lines+markers", name=ta,
-            line=dict(color="#4C9BE8", width=2), marker=dict(size=6)))
-        f2.add_trace(go.Scatter(x=days, y=pb_pct, mode="lines+markers", name=tb,
-            line=dict(color="#FF7F50", width=2), marker=dict(size=6)))
+        f2.add_trace(go.Scatter(x=hist_days + pred_days, y=ha_pct + pa_pct,
+            mode="lines", name=ta,
+            line=dict(color="#4C9BE8", width=2)))
+        f2.add_trace(go.Scatter(x=hist_days + pred_days, y=hb_pct + pb_pct,
+            mode="lines", name=tb,
+            line=dict(color="#FF7F50", width=2)))
+        f2.add_vline(x=len(ha), line_dash="dash", line_color="gray",
+            annotation_text="Today", annotation_position="top left")
         f2.update_layout(
-            title="7-Day Forecast Comparison",
+            title="30-Day History + 7-Day Forecast",
             xaxis_title="Day", yaxis_title="Cumulative Return (%)",
             template="plotly_dark", height=340,
             margin=dict(l=0, r=0, t=40, b=0),
@@ -686,15 +739,7 @@ def _display_compare_results(report):
 
 
 
-# Page config + route dispatch
 
-st.set_page_config(page_title="Stock Predictor", page_icon="static/favicon.svg", layout="wide")
-
-st.markdown("""
-<style>
-.block-container { padding-top: 4rem !important; }
-</style>
-""", unsafe_allow_html=True)
 
 if st.session_state.page == "detail" and st.session_state.selected_ticker:
     render_detail_page(st.session_state.selected_ticker)
