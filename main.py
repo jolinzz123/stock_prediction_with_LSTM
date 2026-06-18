@@ -15,6 +15,15 @@ from news_analyzer import (
 from comparator import compare_stocks
 import cache_manager
 
+# ── Page config (must run before any other st call) ─────────────────────────
+st.set_page_config(
+    page_title="Foresight — Stock Intelligence",
+    page_icon="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><polyline points='3 17 9 11 13 15 21 7' fill='none' stroke='%234C9BE8' stroke-width='2.5' stroke-linecap='round'/></svg>",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
+
 # ── Watchlist ───────────────────────────────────────────────────────────────
 WATCHLIST = [
     "AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "TSLA",
@@ -28,15 +37,18 @@ if "page" not in st.session_state:
 if "selected_ticker" not in st.session_state:
     st.session_state.selected_ticker = None
 if "theme" not in st.session_state:
-    st.session_state.theme = "dark"
+    qp = st.query_params
+    if "browser_theme" in qp:
+        st.session_state.theme = qp["browser_theme"]
+        st.session_state.theme_manual = (qp.get("theme_manual") == "1")
+    else:
+        st.html("""
+<script>
+(function(){const d=window.matchMedia('(prefers-color-scheme:dark)').matches;const u=new URL(window.location);if(!u.searchParams.has('browser_theme')){u.searchParams.set('browser_theme',d?'dark':'light');window.location.replace(u.toString());}})();
+</script>
+        """)
+        st.stop()
 
-# ── Page config (must run before any other st call) ─────────────────────────
-st.set_page_config(
-    page_title="Foresight — Stock Intelligence",
-    page_icon="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><polyline points='3 17 9 11 13 15 21 7' fill='none' stroke='%234C9BE8' stroke-width='2.5' stroke-linecap='round'/></svg>",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
 
 # ── Design tokens ───────────────────────────────────────────────────────────
 DARK = {
@@ -76,7 +88,7 @@ DARK = {
     "disclaimer_bg":  "rgba(245,166,35,0.06)",
 }
 LIGHT = {
-    "bg_base":        "#EEF2F7",
+    "bg_base":        "#FFFFFF",
     "bg_surface":     "#F7F9FC",
     "bg_card":        "#FFFFFF",
     "bg_card_hover":  "#F0F5FB",
@@ -114,6 +126,14 @@ LIGHT = {
 
 T = DARK if st.session_state.theme == "dark" else LIGHT
 is_dark = st.session_state.theme == "dark"
+
+# Listen for browser theme changes
+if not st.session_state.get("theme_manual", False):
+    st.html("""
+<script>
+(function(){const m=window.matchMedia(\"(prefers-color-scheme:dark)\");m.addEventListener(\"change\",function(e){const u=new URL(window.location);if(u.searchParams.get(\"theme_manual\")!==\"1\"){const t=e.matches?\"dark\":\"light\";if(u.searchParams.get(\"browser_theme\")!==t){u.searchParams.set(\"browser_theme\",t);window.location.replace(u.toString());}}});})();
+</script>
+    """)
 
 # ── Inline SVG icons ────────────────────────────────────────────────────────
 
@@ -456,9 +476,35 @@ html, body, [data-testid="stAppViewContainer"],
     background: {T["bg_card"]} !important;
     border-radius: 12px !important;
 }}
-/* Target the glide-data-editor canvas wrapper */
-[data-testid="stDataFrame"] iframe {{
-    filter: {'invert(0)' if not is_dark else 'none'} !important;
+/* Target the HTML table inside the dataframe - dark theme support */
+[data-testid="stDataFrame"] table {{
+    background: {T["bg_surface"]} !important;
+    border-collapse: collapse !important;
+    width: 100% !important;
+}}
+[data-testid="stDataFrame"] thead th {{
+    background: {T["bg_surface"]} !important;
+    color: {T["text_primary"]} !important;
+    border-bottom: 1px solid {T["border"]} !important;
+    font-family: 'Space Grotesk', sans-serif !important;
+    font-size: 0.7rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.06em !important;
+    text-transform: uppercase !important;
+    padding: 0.6rem 1rem !important;
+}}
+[data-testid="stDataFrame"] tbody td {{
+    background: {T["bg_card"]} !important;
+    color: {T["text_primary"]} !important;
+    border-bottom: 1px solid {T["border"]} !important;
+    padding: 0.55rem 1rem !important;
+    font-size: 0.84rem !important;
+}}
+[data-testid="stDataFrame"] tbody tr:hover td {{
+    background: {T["bg_card_hover"]} !important;
+}}
+[data-testid="stDataFrame"] tbody tr:last-child td {{
+    border-bottom: none !important;
 }}
 
 /* ── Custom HTML forecast table ─ */
@@ -907,7 +953,7 @@ def news_card_html(article: dict) -> str:
     link = (
         f'<a href="{url}" target="_blank" rel="noopener" '
         f'style="display:inline-flex;align-items:center;gap:3px;font-size:0.73rem;'
-        f'color:{T["accent_blue"]};text-decoration:none;font-family:Space Grotesk,sans-serif;'
+        f'color:{_tblue};text-decoration:none;font-family:Space Grotesk,sans-serif;'
         f'font-weight:500;margin-top:0.4rem;">'
         f'{icon("external-link", 11, T["accent_blue"])} Read article</a>'
         if url else ""
@@ -1028,6 +1074,9 @@ def render_nav(show_back: bool = False) -> None:
         )
         if st.button(toggle_ico, key="theme_toggle", help=toggle_tip, type="secondary"):
             st.session_state.theme = "light" if is_dark else "dark"
+            st.session_state.theme_manual = True
+            st.query_params["browser_theme"] = st.session_state.theme
+            st.query_params["theme_manual"] = "1"
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1624,6 +1673,19 @@ def _cached_compare(ticker_a, ticker_b):
 
 def render_compare_page():
     render_ticker_strip()
+    st.markdown("""
+    <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="44" height="44">
+        <rect width="64" height="64" rx="12" fill="#1E2530"/>
+        <polyline points="6,48 18,30 28,38 40,18 54,26"
+          fill="none" stroke="#ffffff" stroke-width="4"
+          stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="54" cy="26" r="5" fill="#2ECC71"/>
+      </svg>
+      <span style="font-size:2.4rem; font-weight:700; color:var(--text-color); letter-spacing:-0.5px;">Stock Comparator</span>
+    </div>
+    """, unsafe_allow_html=True)
+
 
     st.markdown("""
     <style>
@@ -1668,18 +1730,15 @@ def render_compare_page():
                   use_container_width=True, key="nav_cp")
     st.markdown("### Select Two Stocks to Compare")
 
-    col1, col2 = st.columns(2)
-    with col1:
+    col_a, col_b, col_btn = st.columns([4, 4, 3])
+    with col_a:
         ticker_a = st.text_input(
             "Stock A", placeholder="e.g. AAPL", key="comp_a").strip().upper()
-    with col2:
+    with col_b:
         ticker_b = st.text_input(
             "Stock B", placeholder="e.g. TSLA", key="comp_b").strip().upper()
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    _, btn_col, _ = st.columns([1, 2, 1])
-    with btn_col:
+    with col_btn:
+        st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
         run_compare = st.button("Compare", type="primary",
                                 use_container_width=True, key="compare_go")
 
@@ -1734,10 +1793,14 @@ def _build_radar_chart(report):
     ))
     fig.update_layout(
         polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
-        template="plotly_dark", height=340,
+        template=T["plotly_theme"], height=340,
         margin=dict(l=50, r=50, t=50, b=80),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(color=T["text_secondary"]),
         legend=dict(orientation="h", yanchor="bottom",
-                    y=1.02, xanchor="right", x=1),
+                    y=1.02, xanchor="right", x=1,
+                    font=dict(color=T["text_primary"])),
     )
     return fig
 
@@ -1748,36 +1811,34 @@ def _display_compare_results(report):
     sc = report["scores"]
     wr = report.get("winner")
     win_tag = wr.get("winner") if isinstance(wr, dict) else wr
+    _tsec = T["text_secondary"]
 
     st.divider()
 
-    # Recommendation banner (full-width, aligned with divider)
-    if win_tag:
-        clr = "#2ECC71"
-        txt = f"Recommended: {win_tag}"
-        ic = chr(8593)
-    else:
-        clr = "#F39C12"
-        txt = "Tie - Suggestions below"
-        ic = chr(9878)
-    st.markdown(
-        f"<div style='background:{clr};color:#111;font-size:1.4rem;font-weight:700;"
-        f"padding:0.5em 1em;border-radius:8px;display:flex;align-items:center;justify-content:center;'>"
-        f"{ic}  {txt}</div>",
-        unsafe_allow_html=True,
-    )
-    ca, cb = st.columns(2)
-    ca.metric(f"{ta} Score", f"{report['score_a']:.0f}/{report['total']}",
-              help="Combined weighted score across all dimensions (higher = better)")
-    cb.metric(f"{tb} Score", f"{report['score_b']:.0f}/{report['total']}",
-              help="Combined weighted score across all dimensions (higher = better)")
+    # Dashboard layout: left (banner + text + table) | right (scores + radar)
+    col_left, col_right = st.columns([1.1, 1])
 
-    st.markdown(f"**{report['reason']}**")
+    with col_left:
+        # 1. Recommendation banner
+        if win_tag:
+            clr = "#2ECC71"
+            txt = f"Recommended: {win_tag}"
+            ic = chr(8593)
+        else:
+            clr = "#F39C12"
+            txt = "Tie - Suggestions below"
+            ic = chr(9878)
+        st.markdown(
+            f"<div style='background:{clr};color:#111;font-size:1.4rem;font-weight:700;"
+            f"padding:0.5em 1em;border-radius:8px;display:flex;align-items:center;justify-content:center;'>"
+            f"{txt}</div>",
+            unsafe_allow_html=True,
+        )
 
-    # Side by side: table + radar
-    cl, cr = st.columns([1, 1])
+        # 2. Text description
+        st.markdown(f"**{report['reason']}**")
 
-    with cl:
+        # 3. Note + comparison table
         st.markdown(
             "*Note: the total score is a weighted sum of the sub-scores below.*")
         rows = []
@@ -1808,14 +1869,61 @@ def _display_compare_results(report):
                 "Pts (Weight)": pts,
             })
         df = pd.DataFrame(rows)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        # Build custom dark-themed HTML table
+        html = '<table style="width:100%; border-collapse:collapse; font-size:0.84rem; font-family:Inter,sans-serif;">'
+        # Header
+        html += f'<thead><tr>'
+        html += f'<th style="text-align:left; padding:0.7rem 0.9rem; background:{T["bg_surface"]}; color:{_tsec}; border-bottom:1px solid {T["border"]}; font-weight:600; text-transform:uppercase; font-size:0.68rem; letter-spacing:0.06em;">Dimension</th>'
+        html += f'<th style="text-align:center; padding:0.7rem 0.9rem; background:{T["bg_surface"]}; color:{_tsec}; border-bottom:1px solid {T["border"]}; font-weight:600; text-transform:uppercase; font-size:0.68rem; letter-spacing:0.06em;">{ta}</th>'
+        html += f'<th style="text-align:center; padding:0.7rem 0.9rem; background:{T["bg_surface"]}; color:{_tsec}; border-bottom:1px solid {T["border"]}; font-weight:600; text-transform:uppercase; font-size:0.68rem; letter-spacing:0.06em;">{tb}</th>'
+        html += f'<th style="text-align:center; padding:0.7rem 0.9rem; background:{T["bg_surface"]}; color:{_tsec}; border-bottom:1px solid {T["border"]}; font-weight:600; text-transform:uppercase; font-size:0.68rem; letter-spacing:0.06em;">Better</th>'
+        html += f'<th style="text-align:center; padding:0.7rem 0.9rem; background:{T["bg_surface"]}; color:{_tsec}; border-bottom:1px solid {T["border"]}; font-weight:600; text-transform:uppercase; font-size:0.68rem; letter-spacing:0.06em;">Pts (Weight)</th>'
+        html += f'</tr></thead>'
+        # Body
+        html += '<tbody>'
+        for _, row in df.iterrows():
+            winner = row["Better"]
+            if winner == ta:
+                better_color = T["accent_green"]
+                row_bg = "rgba(46,204,113,0.05)"
+            elif winner == tb:
+                better_color = T["accent_blue"]
+                row_bg = "rgba(76,155,232,0.05)"
+            else:
+                better_color = T["text_secondary"]
+                row_bg = "transparent"
+            html += f'<tr style="background:{row_bg};">'
+            html += f'<td style="text-align:left; padding:0.6rem 0.9rem; border-bottom:1px solid {T["border"]}; color:{T["text_primary"]};">{row["Dimension"]}</td>'
+            html += f'<td style="text-align:center; padding:0.6rem 0.9rem; border-bottom:1px solid {T["border"]}; color:{T["text_primary"]}; font-family:JetBrains Mono,monospace;">{row[ta]}</td>'
+            html += f'<td style="text-align:center; padding:0.6rem 0.9rem; border-bottom:1px solid {T["border"]}; color:{T["text_primary"]}; font-family:JetBrains Mono,monospace;">{row[tb]}</td>'
+            html += f'<td style="text-align:center; padding:0.6rem 0.9rem; border-bottom:1px solid {T["border"]}; color:{better_color}; font-weight:600; font-size:0.78rem;">{winner}</td>'
+            html += f'<td style="text-align:center; padding:0.6rem 0.9rem; border-bottom:1px solid {T["border"]}; color:{_tsec}; font-family:JetBrains Mono,monospace; font-size:0.78rem;">{row["Pts (Weight)"]}</td>'
+            html += '</tr>'
+        html += '</tbody></table>'
+        st.markdown(html, unsafe_allow_html=True)
         st.caption(
             "Risk (Volatility): historical std dev of daily returns | Model Confidence: based on our LSTM model backtest MSE")
 
-    with cr:
+    with col_right:
+                # 1. Scores side-by-side (background-free, no st.metric card frames)
+        sub1, sub2 = col_right.columns(2)
+        sub1.markdown(
+            f"<div style='text-align:center; padding:0.4em 0;'>"
+            f"<div style='font-size:0.75rem; color:{T["text_secondary"]}; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.15em;'>{ta} Score</div>"
+            f"<div style='font-size:2rem; font-weight:700; color:{T["accent_blue"]};'>{report['score_a']:.0f}<span style='font-size:0.9rem; color:{T["text_secondary"]}; font-weight:400;'>/{report['total']}</span></div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        sub2.markdown(
+            f"<div style='text-align:center; padding:0.4em 0;'>"
+            f"<div style='font-size:0.75rem; color:{T["text_secondary"]}; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.15em;'>{tb} Score</div>"
+            f"<div style='font-size:2rem; font-weight:700; color:#FF7F50;'>{report['score_b']:.0f}<span style='font-size:0.9rem; color:{T["text_secondary"]}; font-weight:400;'>/{report['total']}</span></div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        # 2. Radar chart
         fig = _build_radar_chart(report)
         st.plotly_chart(fig, use_container_width=True)
-
     # Forecast chart (full width) ? historical 30 days + 7-day prediction
     da = report["data_a"]
     db = report["data_b"]
@@ -1833,21 +1941,33 @@ def _display_compare_results(report):
         hist_days = list(range(1, len(ha) + 1))
         pred_days = list(range(len(ha) + 1, len(ha) + len(pa) + 1))
         f2 = go.Figure()
-        f2.add_trace(go.Scatter(x=hist_days + pred_days, y=ha_pct + pa_pct,
+        # Stock A (split history + forecast)
+        f2.add_trace(go.Scatter(x=hist_days, y=ha_pct,
                                 mode="lines", name=ta,
                                 line=dict(color="#4C9BE8", width=2)))
-        f2.add_trace(go.Scatter(x=hist_days + pred_days, y=hb_pct + pb_pct,
+        f2.add_trace(go.Scatter(x=[len(ha)] + pred_days, y=[ha_pct[-1]] + pa_pct,
+                                mode="lines", showlegend=False,
+                                line=dict(color="#4C9BE8", width=2, dash="dash")))
+        # Stock B (split history + forecast)
+        f2.add_trace(go.Scatter(x=hist_days, y=hb_pct,
                                 mode="lines", name=tb,
                                 line=dict(color="#FF7F50", width=2)))
+        f2.add_trace(go.Scatter(x=[len(hb)] + pred_days, y=[hb_pct[-1]] + pb_pct,
+                                mode="lines", showlegend=False,
+                                line=dict(color="#FF7F50", width=2, dash="dash")))
         f2.add_vline(x=len(ha), line_dash="dash", line_color="gray",
                      annotation_text="Today", annotation_position="top left")
         f2.update_layout(
-            title="30-Day History + 7-Day Forecast",
+            title=dict(text="30-Day History + 7-Day Forecast", font=dict(color=T["text_primary"])),
             xaxis_title="Day", yaxis_title="Cumulative Return (%)",
-            template="plotly_dark", height=340,
+            template=T["plotly_theme"], height=340,
             margin=dict(l=0, r=0, t=40, b=0),
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            font=dict(color=T["text_secondary"]),
             legend=dict(orientation="h", yanchor="bottom",
-                        y=1.02, xanchor="right", x=1),
+                        y=1.02, xanchor="right", x=1,
+                        font=dict(color=T["text_primary"])),
         )
         st.plotly_chart(f2, use_container_width=True)
 
