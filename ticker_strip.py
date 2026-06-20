@@ -64,7 +64,7 @@ def render_ticker_strip():
         spark = _mini_sparkline(r["close_arr"], color=color)
         items_html += (
             f"<span style='margin-right:42px; white-space:nowrap; display:inline-flex; align-items:center;'>"
-            f"<b style='color:#111111; font-weight:700;'>{r['ticker']}</b>"
+            f"<b style='color:var(--text-color, #111111); font-weight:700;'>{r['ticker']}</b>"
             f"<span style='color:{color}; margin-left:8px; font-weight:600;'>"
             f"{r['price']:.2f} {arrow} {abs(r['pct']):.2f}%</span>"
             f"{spark}"
@@ -74,8 +74,8 @@ def render_ticker_strip():
     full_content = items_html + items_html  # copy one time for Marquee
 
     html = f"""
-    <div style="overflow:hidden; white-space:nowrap; background:#ffffff;
-                border:1px solid #e8e8e8; padding:10px 0; border-radius:6px;
+    <div style="overflow:hidden; white-space:nowrap; background:var(--secondary-background-color, #ffffff);
+                border:1px solid rgba(128,128,128,0.2); padding:10px 0; border-radius:6px;
                 margin-bottom:14px;">
         <div style="display:inline-block; animation: ticker-scroll 140s linear infinite;">
             {full_content}

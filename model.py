@@ -2,11 +2,11 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 from sklearn.linear_model import RidgeCV
+from sklearn.multioutput import MultiOutputRegressor
 from sklearn.preprocessing import StandardScaler
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-from tensorflow.keras.layers import LSTM, Dense, Dropout, Input
+from tensorflow.keras.layers import GRU, Dense, Dropout, Input
 from tensorflow.keras.models import Sequential
-from sklearn.preprocessing import MinMaxScaler
 
 LOOKBACK = 60
 FUTURE_DAYS = 7
@@ -14,42 +14,17 @@ EPOCHS = 75
 BATCH_SIZE = 16
 
 FEATURE_COLUMNS = [
-    "Open",
-    "High",
-    "Low",
-    "Close",
-    "Adj Close",
-    "Volume",
-    "Return_1",
-    "Return_2",
-    "Return_3",
-    "Return_5",
-    "Delta_1",
-    "Delta_2",
-    "Delta_3",
-    "Delta_5",
-    "Momentum_3",
-    "Momentum_5",
-    "Momentum_10",
-    "CloseToSMA_5",
-    "CloseToSMA_10",
-    "CloseToSMA_20",
-    "Volatility_5",
-    "Volatility_10",
-    "Volatility_20",
-    "Position_10",
-    "Position_20",
-    "RangePct",
-    "BodyPct",
-    "GapPct",
-    "RSI_14",
-    "MACD",
-    "MACDSignal",
-    "MACDHist",
-    "ATR_14",
-    "VolumeChange_1",
-    "VolumeToSMA_5",
-    "VolumeToSMA_20",
+    "Open", "High", "Low", "Close", "Adj Close", "Volume",
+    "Return_1", "Return_2", "Return_3", "Return_5",
+    "Delta_1", "Delta_2", "Delta_3", "Delta_5",
+    "Momentum_3", "Momentum_5", "Momentum_10",
+    "CloseToSMA_5", "CloseToSMA_10", "CloseToSMA_20",
+    "Volatility_5", "Volatility_10", "Volatility_20",
+    "Position_10", "Position_20",
+    "RangePct", "BodyPct", "GapPct",
+    "RSI_14", "MACD", "MACDSignal", "MACDHist", "ATR_14",
+    "VolumeChange_1", "VolumeToSMA_5", "VolumeToSMA_20",
+    "Sentiment",
 ]
 
 
@@ -65,21 +40,15 @@ def _rsi(close: pd.Series, window: int = 14) -> pd.Series:
     return 100 - (100 / (1 + rs))
 
 
-def build_feature_frame(data) -> pd.DataFrame:
+def build_feature_frame(data, sentiment=None) -> pd.DataFrame:
     if isinstance(data, pd.DataFrame):
         df = data.copy()
     else:
         close = np.asarray(data, dtype=float).reshape(-1)
-        df = pd.DataFrame(
-            {
-                "Open": close,
-                "High": close,
-                "Low": close,
-                "Close": close,
-                "Adj Close": close,
-                "Volume": 0.0,
-            }
-        )
+        df = pd.DataFrame({
+            "Open": close, "High": close, "Low": close,
+            "Close": close, "Adj Close": close, "Volume": 0.0,
+        })
 
     df = df.sort_index()
     close = df["Close"].astype(float)
@@ -134,14 +103,26 @@ def build_feature_frame(data) -> pd.DataFrame:
     features["VolumeToSMA_5"] = _safe_div(volume, volume.rolling(5).mean()) - 1
     features["VolumeToSMA_20"] = _safe_div(volume, volume.rolling(20).mean()) - 1
 
+    if sentiment is None:
+        features["Sentiment"] = 0.0
+    elif isinstance(sentiment, (int, float)):
+        features["Sentiment"] = float(sentiment)
+    else:
+        s = pd.Series(sentiment, dtype=float)
+        features["Sentiment"] = s.reindex(features.index, fill_value=0.0).values
+
     features = features.replace([np.inf, -np.inf], np.nan)
     features = features.ffill().fillna(0.0)
     return features[FEATURE_COLUMNS]
 
 
-def make_supervised_data(feature_frame: pd.DataFrame, lookback: int = LOOKBACK, future_days: int = FUTURE_DAYS):
+def make_supervised_data(
+    feature_frame: pd.DataFrame,
+    lookback: int = LOOKBACK,
+    future_days: int = FUTURE_DAYS,
+):
     features = feature_frame[FEATURE_COLUMNS].astype(float)
-    target = feature_frame["Close"].astype(float).to_numpy()
+    close = feature_frame["Close"].astype(float).to_numpy()
 
     X_seq, X_flat, y = [], [], []
     for i in range(lookback, len(features) - future_days + 1):
@@ -154,7 +135,13 @@ def make_supervised_data(feature_frame: pd.DataFrame, lookback: int = LOOKBACK, 
         short_std = window.tail(5).std(ddof=0).to_numpy()
         raw_close_window = window["Close"].tail(10).to_numpy()
         X_flat.append(np.concatenate([latest, short_mean, medium_mean, short_std, raw_close_window]))
-        y.append(target[i:i + future_days])
+
+        # Target: forward returns relative to the last known price before the window.
+        # Using returns instead of absolute prices breaks the "predict yesterday's close"
+        # incentive that causes delayed replication in price-level models.
+        current_price = close[i - 1]
+        future_prices = close[i:i + future_days]
+        y.append((future_prices - current_price) / current_price)
 
     return np.asarray(X_seq), np.asarray(X_flat), np.asarray(y)
 
@@ -169,25 +156,43 @@ class _ProgressCallback(tf.keras.callbacks.Callback):
         self._fn(epoch + 1, self._total)
 
 
-def train_linear_model(X_flat: np.ndarray, y: np.ndarray):
+def train_xgboost(X_flat: np.ndarray, y_returns: np.ndarray):
+    """XGBoost multi-output regressor trained on return targets."""
+    from xgboost import XGBRegressor
+
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X_flat)
-    model = RidgeCV(alphas=np.logspace(-4, 3, 24))
-    model.fit(X_scaled, y)
+    model = MultiOutputRegressor(
+        XGBRegressor(
+            n_estimators=300,
+            max_depth=4,
+            learning_rate=0.05,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            min_child_weight=3,
+            reg_alpha=0.1,
+            reg_lambda=1.0,
+            random_state=42,
+            n_jobs=1,
+        ),
+        n_jobs=1,
+    )
+    model.fit(X_scaled, y_returns)
     return model, scaler
 
 
-def predict_linear_model(model, scaler, X_flat: np.ndarray) -> np.ndarray:
+def predict_xgboost(model, scaler, X_flat: np.ndarray) -> np.ndarray:
     return model.predict(scaler.transform(X_flat))
 
 
-def train_residual_lstm(
+def train_residual_gru(
     X_seq: np.ndarray,
     residuals: np.ndarray,
     epochs: int = EPOCHS,
     batch_size: int = BATCH_SIZE,
     epoch_callback=None,
 ):
+    """GRU trained on the residuals left by XGBoost (return space)."""
     future_days = residuals.shape[1]
 
     feature_scaler = StandardScaler()
@@ -197,16 +202,14 @@ def train_residual_lstm(
     residual_scaler = StandardScaler()
     y = residual_scaler.fit_transform(residuals.reshape(-1, 1)).reshape(-1, future_days)
 
-    model = Sequential(
-        [
-            Input(shape=(X_seq.shape[1], X_seq.shape[2])),
-            LSTM(64, return_sequences=True),
-            Dropout(0.12),
-            LSTM(32),
-            Dense(16, activation="relu"),
-            Dense(future_days),
-        ]
-    )
+    model = Sequential([
+        Input(shape=(X_seq.shape[1], X_seq.shape[2])),
+        GRU(64, return_sequences=True),
+        Dropout(0.12),
+        GRU(32),
+        Dense(16, activation="relu"),
+        Dense(future_days),
+    ])
     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001), loss="huber")
 
     callbacks = [
@@ -217,8 +220,7 @@ def train_residual_lstm(
         callbacks.append(_ProgressCallback(epochs, epoch_callback))
 
     model.fit(
-        scaled,
-        y,
+        scaled, y,
         epochs=epochs,
         batch_size=batch_size,
         validation_split=0.15,
@@ -229,12 +231,30 @@ def train_residual_lstm(
     return model, feature_scaler, residual_scaler
 
 
-def predict_residual_lstm(model, feature_scaler, residual_scaler, X_seq: np.ndarray) -> np.ndarray:
+def predict_residual_gru(model, feature_scaler, residual_scaler, X_seq: np.ndarray) -> np.ndarray:
     flat = X_seq.reshape(-1, X_seq.shape[-1])
     scaled = feature_scaler.transform(flat).reshape(X_seq.shape)
-    pred_scaled = model.predict(scaled, verbose=0)  # (N, future_days)
+    pred_scaled = model.predict(scaled, verbose=0)
     n, fd = pred_scaled.shape
     return residual_scaler.inverse_transform(pred_scaled.reshape(-1, 1)).reshape(n, fd)
+
+
+def train_meta_stacker(meta_features: np.ndarray, meta_returns: np.ndarray):
+    """
+    Ridge meta-learner for Stacking.
+
+    Input:  (N, 3 * future_days) — concatenated return predictions from XGBoost+GRU and ARIMA
+    Output: (N, future_days)     — optimally weighted return predictions
+    """
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(meta_features)
+    model = RidgeCV(alphas=np.logspace(-4, 2, 20))
+    model.fit(X_scaled, meta_returns)
+    return model, scaler
+
+
+def predict_meta_stacker(model, scaler, meta_features: np.ndarray) -> np.ndarray:
+    return model.predict(scaler.transform(meta_features))
 
 
 def train_predict_arima(close_prices: np.ndarray, future_days: int = FUTURE_DAYS) -> np.ndarray:
@@ -246,57 +266,3 @@ def train_predict_arima(close_prices: np.ndarray, future_days: int = FUTURE_DAYS
         result = ARIMA(close_prices, order=(5, 1, 2)).fit()
         forecast = result.forecast(steps=future_days)
     return np.asarray(forecast)
-
-
-def prepare_data(data, lookback: int = LOOKBACK):
-    if isinstance(data, pd.DataFrame):
-        close = data["Close"].to_numpy(dtype=float)
-    else:
-        close = np.asarray(data, dtype=float).reshape(-1)
-
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled = scaler.fit_transform(close.reshape(-1, 1))
-
-    X, y = [], []
-    for i in range(lookback, len(scaled)):
-        X.append(scaled[i - lookback:i, 0])
-        y.append(scaled[i, 0])
-
-    X = np.asarray(X).reshape(-1, lookback, 1)
-    y = np.asarray(y)
-    return X, y, scaler
-
-
-def build_model(lookback: int = LOOKBACK) -> Sequential:
-    model = Sequential(
-        [
-            Input(shape=(lookback, 1)),
-            LSTM(64, return_sequences=True),
-            Dropout(0.2),
-            LSTM(64),
-            Dropout(0.2),
-            Dense(32, activation="relu"),
-            Dense(1),
-        ]
-    )
-    model.compile(optimizer="adam", loss="mean_squared_error")
-    return model
-
-
-def train_model(X, y, epochs: int = EPOCHS, batch_size: int = BATCH_SIZE, epoch_callback=None):
-    model = build_model(X.shape[1])
-    callbacks = [EarlyStopping(monitor="val_loss", patience=5, restore_best_weights=True)]
-    if epoch_callback:
-        callbacks.append(_ProgressCallback(epochs, epoch_callback))
-
-    model.fit(
-        X,
-        y,
-        epochs=epochs,
-        batch_size=batch_size,
-        validation_split=0.1,
-        callbacks=callbacks,
-        verbose=0,
-        shuffle=False,
-    )
-    return model

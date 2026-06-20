@@ -1,4 +1,6 @@
 .venv
 .claude
+.env
 tests/
 __pycache__/
+cache

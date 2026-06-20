@@ -26,7 +26,8 @@ def _fetch_chart(ticker: str, period: str = "2y") -> dict:
         },
         timeout=20,
     )
-    response.raise_for_status()
+    if response.status_code != 200:
+        raise ValueError(f"No data found for ticker '{ticker}'. Please check the symbol and try again.")
     payload = response.json()
     chart = payload.get("chart", {})
     if chart.get("error"):
