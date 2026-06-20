@@ -81,7 +81,7 @@ def _display_compare_results(report):
             bg_col = T["badge_buy_bg"]
             bd_col = T["badge_buy_bd"]
             txt_col = T["accent_green"]
-            txt = f"↑ Recommended: {win_tag}"
+            txt = f"Recommended: {win_tag}"
         else:
             bg_col = T["badge_hold_bg"]
             bd_col = T["badge_hold_bd"]
@@ -90,7 +90,8 @@ def _display_compare_results(report):
         st.markdown(
             f"<div style='background:{bg_col};border:1px solid {bd_col};color:{txt_col};"
             f"font-family:Space Grotesk,sans-serif;font-size:1.15rem;font-weight:700;"
-            f"padding:0.65rem 1.2rem;border-radius:10px;text-align:center;'>{txt}</div>",
+            f"padding:1.2rem 1.2rem;border-radius:10px;text-align:center;"
+            f"display:flex;align-items:center;justify-content:center;height:100%;min-height:4.5rem;'>{txt}</div>",
             unsafe_allow_html=True,
         )
     with c2:
@@ -155,13 +156,11 @@ def _display_compare_results(report):
         html += '</tbody></table>'
         st.markdown(html, unsafe_allow_html=True)
         st.caption(
-            "Risk: std-dev of daily returns · Confidence: LSTM backtest MSE")
+            "Risk: std-dev of daily returns · Confidence: ensemble backtest MSE")
 
     with cr:
         rail_header("Radar comparison", icon("activity", 13, T["text_muted"]))
-        st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
         st.plotly_chart(_build_radar_chart(report), use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
 
     # ── Forecast chart ────────────────────────────────────────────────────────
     da = report["data_a"]
@@ -211,9 +210,7 @@ def _display_compare_results(report):
                         y=1.02, xanchor="right", x=1,
                         font=dict(color=T["text_primary"])),
         )
-        st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
         st.plotly_chart(f2, use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown(f"""
 <div class="disclaimer">

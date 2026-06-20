@@ -158,7 +158,7 @@ def generate_recommendation(
         signal          : str    – STRONG BUY / BUY / HOLD / REDUCE / AVOID
         color           : str    – hex colour for the badge
         combined_score  : float
-        price_change_pct: float  – LSTM-implied 7-day return (%)
+        price_change_pct: float  – model-implied 7-day return (%)
         predicted_price : float  – day-7 price
         rationale       : str    – empty; narrative built in main.py
     }

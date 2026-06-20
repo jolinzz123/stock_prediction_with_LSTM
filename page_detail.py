@@ -124,11 +124,6 @@ def render_detail_page(ticker: str) -> None:
     render_ticker_strip()
     render_nav(show_back=True)
 
-    if st.button("← Back to watchlist", key="back_btn", type="secondary"):
-        st.session_state.page = "watchlist"
-        st.session_state.selected_ticker = None
-        st.rerun()
-
     # ── Load data / cache ────────────────────────────────────────────────────
     cached = cache_manager.load(ticker)
     if cached:
@@ -144,7 +139,16 @@ def render_detail_page(ticker: str) -> None:
                 st.error(str(e))
                 return
 
-        result = run_prediction(df, future_days=7)
+        progress_bar = st.progress(0)
+        progress_text = st.empty()
+
+        def _on_epoch(epoch, total):
+            progress_bar.progress(epoch / total)
+            progress_text.caption(f"Training model… epoch {epoch}/{total}")
+
+        result = run_prediction(df, future_days=7, epoch_callback=_on_epoch)
+        progress_bar.empty()
+        progress_text.empty()
         cache_manager.save(ticker, {"df": df, "info": info, "result": result})
 
     prices = df["Close"].to_numpy(dtype=float)
@@ -210,22 +214,21 @@ def render_detail_page(ticker: str) -> None:
         line=dict(color=T["accent_blue"], width=1.6),
         hovertemplate="<b>%{x|%b %d %Y}</b><br>%{y:.2f}<extra></extra>",
     ))
-    # Solid green line: bridge from last historical close → first forecast dot
     fig3.add_trace(go.Scatter(
         x=[dates[-1], future_dates[0]],
         y=[prices[-1], future_preds[0]],
-        mode="lines", name="7-day forecast",
-        line=dict(color=T["accent_green"], width=2.2),
-        showlegend=True, hoverinfo="skip",
+        mode="lines", name="bridge",
+        line=dict(color=T["accent_blue"], width=1.6),
+        showlegend=False, hoverinfo="skip",
     ))
     fig3.add_trace(go.Scatter(
         x=list(future_dates),
         y=list(future_preds),
         mode="lines+markers", name="7-day forecast",
-        line=dict(color=T["accent_green"], width=2.2),
+        line=dict(color=T["accent_green"], width=2.2, dash="dot"),
         marker=dict(size=8, symbol="circle", color=T["accent_green"],
                     line=dict(color=T["bg_base"], width=2)),
-        showlegend=False,
+        showlegend=True,
         hovertemplate="<b>%{x|%b %d %Y}</b><br>Forecast: %{y:.2f}<extra></extra>",
     ))
     fig3.add_shape(
@@ -236,9 +239,7 @@ def render_detail_page(ticker: str) -> None:
         layer="below", line_width=0,
     )
     fig3.update_layout(**chart_layout(380))
-    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
     st.plotly_chart(fig3, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
     # ── Forecast summary metrics ──────────────────────────────────────────────
     rail_header("Forecast summary")
@@ -350,19 +351,15 @@ def render_detail_page(ticker: str) -> None:
         layer="below", line_width=0,
     )
     fig2.update_layout(**chart_layout(400))
-    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
     st.plotly_chart(fig2, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("<hr/>", unsafe_allow_html=True)
 
     # ── K-line chart ─────────────────────────────────────────────────────────
     rail_header("K-line chart — OHLC with SMA overlays",
                 icon("candlestick", 13, T["text_muted"]))
-    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
     st.plotly_chart(_build_candlestick(df),
                     use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
     # ── Historical close ──────────────────────────────────────────────────────
     rail_header("Historical closing price — 2 years",
@@ -377,9 +374,7 @@ def render_detail_page(ticker: str) -> None:
         currency + "<extra></extra>",
     ))
     fig1.update_layout(**chart_layout(340))
-    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
     st.plotly_chart(fig1, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
     # ── News & sentiment ──────────────────────────────────────────────────────
     st.markdown("<hr/>", unsafe_allow_html=True)

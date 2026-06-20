@@ -1,12 +1,12 @@
 # Stock Price Predictor
 
-A Streamlit web app that uses an LSTM neural network to predict stock prices.
+A Streamlit web app that uses an XGBoost + GRU + ARIMA stacking ensemble to predict stock prices.
 
 ## Features
 
 - Search any stock by ticker symbol (US stocks, A-shares, etc.)
 - Display 2-year historical closing price chart
-- Train an LSTM model on the historical data with a live progress bar
+- Train an ensemble model on the historical data with a live progress bar
 - Compare actual vs predicted prices on the test set
 - Forecast the next 7 trading days using autoregressive prediction
 
@@ -32,6 +32,6 @@ streamlit run main.py
 |---|---|
 | UI | Streamlit |
 | Charts | Plotly |
-| Model | TensorFlow / Keras (LSTM) |
+| Model | XGBoost · GRU (Keras) · ARIMA (statsmodels) |
 | Data | yfinance |
 | Preprocessing | scikit-learn |
