@@ -110,7 +110,7 @@ def _build_recommendation_text(rec: dict, news_result: dict) -> str:
         action_hint = "no decisive edge in either direction; monitor for a breakout catalyst"
 
     return (
-        f"The LSTM model projects the price to <strong>{direction} {trend_str} "
+        f"The xgboost model projects the price to <strong>{direction} {trend_str} "
         f"over the next 7 trading days</strong>, while the overall combined signal "
         f"reads as <strong>{score_desc}</strong> (score {score:+.2f}). "
         f"{news_sent} "
@@ -313,7 +313,7 @@ def render_detail_page(ticker: str) -> None:
 
     bt_anchor = test_start + len(test_preds) - 1
     bt_7d_end = min(bt_anchor + 8, len(dates))
-    bt_dates_7d = dates[bt_anchor + 1 : bt_7d_end]
+    bt_dates_7d = dates[bt_anchor + 1: bt_7d_end]
     if len(bt_dates_7d) < 7:
         bt_dates_7d = pd.bdate_range(
             start=dates[bt_anchor] + timedelta(days=1), periods=7)
@@ -410,12 +410,20 @@ def render_detail_page(ticker: str) -> None:
     pos_pct = news_result["positive_count"] / total * 100
     neu_pct = news_result["neutral_count"] / total * 100
     neg_pct = news_result["negative_count"] / total * 100
+
+    # Center-point of each segment, in % of bar width, for label placement.
+    # Clamp away from the edges so short labels on tiny segments don't clip.
+    pos_mid = max(6.0, min(94.0, pos_pct / 2))
+    neu_mid = max(6.0, min(94.0, pos_pct + neu_pct / 2))
+    neg_mid = max(6.0, min(94.0, pos_pct + neu_pct + neg_pct / 2))
+
     st.markdown(f"""
 <div style="margin:0.75rem 0 1.75rem;">
   <div class="sbar-labels">
-    <span>{news_result["positive_count"]} positive</span>
-    <span>{news_result["neutral_count"]} neutral</span>
-    <span>{news_result["negative_count"]} negative</span>
+    <span style="left:{pos_mid:.2f}%;">{news_result["positive_count"]} positive</span>
+    <span style="left:{neu_mid:.2f}%;">{news_result["neutral_count"]} neutral</span>
+    <span style="left:{neg_mid:.2f}%;">{news_result["negative_count"]} negative</span>
+
   </div>
   <div class="sbar">
     <div class="sbar-p" style="width:{pos_pct:.1f}%;"></div>
@@ -434,7 +442,7 @@ def render_detail_page(ticker: str) -> None:
     st.markdown(
         f"<div style='text-align:center;font-size:0.72rem;color:{T['text_muted']};"
         f"padding-bottom:2rem;font-family:Space Grotesk,sans-serif;'>"
-        f"Foresight · LSTM forecasting · yfinance data · Educational use only"
+        f"Foresight · xgboost forecasting · yfinance data · Educational use only"
         f"</div>",
         unsafe_allow_html=True,
     )

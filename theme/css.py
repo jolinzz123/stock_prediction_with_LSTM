@@ -643,12 +643,18 @@ hr {{ border: none !important; border-top: 1px solid {T["border"]} !important; m
 
 /* ── Sentiment bar ─ */
 .sbar-labels {{
-    display: flex;
-    justify-content: space-between;
+    position: relative;
+    height: 1.1rem;
     font-size: 0.72rem;
     color: {T["text_muted"]};
     font-family: 'Space Grotesk', sans-serif;
     margin-bottom: 0.3rem;
+}}
+.sbar-labels span{{
+    position: absolute;
+    top: 0;
+    transform: translateX(-50%);
+    white-space: nowrap;
 }}
 .sbar {{
     display: flex; height: 5px;

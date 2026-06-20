@@ -146,7 +146,7 @@ def generate_recommendation(
     news_result: dict,
 ) -> dict:
     """
-    Combine LSTM forecast (70%) and news sentiment (30%) into a single signal.
+    Combine xgboost forecast (70%) and news sentiment (30%) into a single signal.
 
     The `rationale` field is intentionally left empty — main.py builds a
     richer narrative via `_build_recommendation_text()` using the returned
