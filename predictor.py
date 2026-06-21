@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from sklearn.ensemble import ExtraTreesClassifier
 
 from model import (
     LOOKBACK,
@@ -166,6 +167,254 @@ def _arima_walkforward_returns(
     return out
 
 
+def _rmse(pred: np.ndarray, actual: np.ndarray) -> float:
+    return float(np.sqrt(np.mean((pred - actual) ** 2)))
+
+
+def _recency_weights(n_samples: int, half_life: float = 126.0) -> np.ndarray:
+    """Give recent regimes more influence without discarding older samples."""
+    age = (n_samples - 1) - np.arange(n_samples, dtype=float)
+    weights = np.power(0.5, age / half_life)
+    return weights / max(float(weights.mean()), 1e-8)
+
+
+def _fit_recent_xgb_forecast(
+    X_flat: np.ndarray,
+    y_returns: np.ndarray,
+    forecast_features: np.ndarray,
+) -> np.ndarray:
+    # Estimate one conservative amplitude factor on a later validation window.
+    # A single factor preserves the seven-day shape and direction while reducing
+    # the common tendency of return models to overstate the size of a move.
+    n_samples = len(y_returns)
+    split = int(n_samples * 0.82)
+    amplitude = 1.0
+    if split >= 50 and n_samples - split >= 20:
+        validation_model, validation_scaler = train_xgboost(
+            X_flat[:split],
+            y_returns[:split],
+            sample_weight=_recency_weights(split),
+        )
+        validation_pred = predict_xgboost(
+            validation_model,
+            validation_scaler,
+            X_flat[split:],
+        )
+        validation_actual = y_returns[split:]
+        denominator = float(np.sum(validation_pred * validation_pred))
+        if denominator > 1e-12:
+            raw_amplitude = float(
+                np.sum(validation_pred * validation_actual) / denominator
+            )
+            amplitude = float(np.clip(raw_amplitude, 0.50, 1.10))
+
+    weights = _recency_weights(len(y_returns))
+    model, scaler = train_xgboost(
+        X_flat,
+        y_returns,
+        sample_weight=weights,
+    )
+    return predict_xgboost(model, scaler, forecast_features) * amplitude
+
+
+def _direction_probabilities(
+    close_arr: np.ndarray,
+    anchor_idx: int,
+    future_days: int,
+    lag: int,
+    min_samples_leaf: int,
+    n_estimators: int,
+) -> tuple[np.ndarray, float]:
+    known_prices = np.asarray(close_arr[: anchor_idx + 1], dtype=float)
+    log_returns = np.diff(np.log(np.maximum(known_prices, 1e-8)))
+    if len(log_returns) < lag + 30:
+        raise ValueError("Not enough return history for direction forecasting.")
+
+    X, y = [], []
+    for i in range(lag, len(log_returns)):
+        X.append(log_returns[i - lag:i])
+        y.append(log_returns[i] > 0)
+    X = np.asarray(X, dtype=float)
+    y = np.asarray(y, dtype=int)
+
+    model = ExtraTreesClassifier(
+        n_estimators=n_estimators,
+        max_features=0.8,
+        min_samples_leaf=min_samples_leaf,
+        class_weight="balanced",
+        random_state=42,
+        n_jobs=-1,
+    )
+    model.fit(X, y, sample_weight=_recency_weights(len(y)))
+
+    simple_returns = np.diff(known_prices) / np.maximum(known_prices[:-1], 1e-8)
+    magnitude = float(np.median(np.abs(simple_returns[-20:])))
+    magnitude = float(np.clip(magnitude, 0.0025, 0.025))
+
+    history = list(log_returns[-lag:])
+    probabilities = []
+    for _ in range(future_days):
+        probability_up = float(
+            model.predict_proba(np.asarray(history[-lag:]).reshape(1, -1))[0, 1]
+        )
+        probabilities.append(probability_up)
+        direction = 1.0 if probability_up >= 0.5 else -1.0
+        history.append(float(np.log1p(direction * magnitude)))
+
+    return np.asarray(probabilities, dtype=float), magnitude
+
+
+def _returns_from_probabilities(
+    probabilities: np.ndarray,
+    magnitude: float,
+    confidence_floor: float,
+) -> np.ndarray:
+    directions = np.where(probabilities >= 0.5, 1.0, -1.0)
+    confidence = np.abs(probabilities - 0.5)
+    amplitude = np.clip(confidence / 0.20, confidence_floor, 1.0)
+    return directions * magnitude * amplitude
+
+
+def _expanding_cv_calibration(
+    close_arr: np.ndarray,
+    anchor_idx: int,
+    future_days: int,
+    n_folds: int = 5,
+) -> tuple[float, dict]:
+    """
+    Calibrate forecast amplitude with expanding-window time-series CV.
+
+    Every validation block is strictly after its training window. The final
+    backtest/future horizon is never used. CV cannot safely invent direction
+    signal, so it only shrinks amplitude when the model is less reliable than
+    a no-change baseline.
+    """
+    last_fold_anchor = anchor_idx - future_days
+    fold_anchors = [
+        last_fold_anchor - future_days * offset
+        for offset in range(n_folds - 1, -1, -1)
+    ]
+    fold_anchors = [
+        idx for idx in fold_anchors
+        if idx >= 50 and idx + future_days <= anchor_idx
+    ]
+
+    if len(fold_anchors) < 3:
+        return 1.0, {
+            "folds": len(fold_anchors),
+            "amplitude_scale": 1.0,
+            "model_nrmse": None,
+            "baseline_nrmse": None,
+            "direction_accuracy": None,
+        }
+
+    model_errors = []
+    baseline_errors = []
+    direction_accuracies = []
+    for fold_anchor in fold_anchors:
+        actual_prices = close_arr[
+            fold_anchor + 1:fold_anchor + future_days + 1
+        ]
+        actual_daily = np.diff(
+            close_arr[fold_anchor:fold_anchor + future_days + 1]
+        )
+        anchor_price = float(close_arr[fold_anchor])
+
+        probabilities, magnitude = _direction_probabilities(
+            close_arr,
+            fold_anchor,
+            future_days,
+            lag=5,
+            min_samples_leaf=2,
+            n_estimators=72,
+        )
+        predicted_returns = _returns_from_probabilities(
+            probabilities,
+            magnitude,
+            confidence_floor=0.50,
+        )
+        predicted_prices = anchor_price * np.cumprod(
+            1.0 + predicted_returns
+        )
+        model_errors.append(
+            float(
+                np.sqrt(np.mean((predicted_prices - actual_prices) ** 2))
+                / max(anchor_price, 1e-8)
+            )
+        )
+        baseline_errors.append(
+            float(
+                np.sqrt(np.mean((anchor_price - actual_prices) ** 2))
+                / max(anchor_price, 1e-8)
+            )
+        )
+        direction_accuracies.append(
+            float(
+                np.mean(
+                    np.sign(predicted_returns)
+                    == np.sign(actual_daily)
+                )
+            )
+        )
+
+    fold_weights = np.arange(1, len(fold_anchors) + 1, dtype=float)
+    fold_weights /= fold_weights.sum()
+    model_nrmse = float(np.sum(np.asarray(model_errors) * fold_weights))
+    baseline_nrmse = float(
+        np.sum(np.asarray(baseline_errors) * fold_weights)
+    )
+    direction_accuracy = float(
+        np.sum(np.asarray(direction_accuracies) * fold_weights)
+    )
+
+    baseline_ratio = baseline_nrmse / max(model_nrmse, 1e-8)
+    direction_ratio = direction_accuracy / 0.55
+    amplitude_scale = float(
+        np.clip(baseline_ratio, 0.35, 1.0)
+        * np.clip(direction_ratio, 0.70, 1.0)
+    )
+    amplitude_scale = float(np.clip(amplitude_scale, 0.30, 1.0))
+
+    diagnostics = {
+        "folds": len(fold_anchors),
+        "amplitude_scale": amplitude_scale,
+        "model_nrmse": model_nrmse,
+        "baseline_nrmse": baseline_nrmse,
+        "direction_accuracy": direction_accuracy,
+        "fold_model_nrmse": model_errors,
+        "fold_baseline_nrmse": baseline_errors,
+        "fold_direction_accuracy": direction_accuracies,
+    }
+    return amplitude_scale, diagnostics
+
+
+def _forecast_daily_direction_path(
+    close_arr: np.ndarray,
+    anchor_idx: int,
+    future_days: int,
+) -> tuple[np.ndarray, dict]:
+    amplitude_scale, diagnostics = _expanding_cv_calibration(
+        close_arr,
+        anchor_idx,
+        future_days,
+    )
+    probabilities, magnitude = _direction_probabilities(
+        close_arr,
+        anchor_idx,
+        future_days,
+        lag=5,
+        min_samples_leaf=2,
+        n_estimators=240,
+    )
+    daily_returns = _returns_from_probabilities(
+        probabilities,
+        magnitude,
+        confidence_floor=0.50,
+    )
+    daily_returns *= amplitude_scale
+    return daily_returns, diagnostics
+
+
 def _forecast_future_stacked(
     df: pd.DataFrame,
     xgb_model, xgb_scaler,
@@ -174,6 +423,7 @@ def _forecast_future_stacked(
     close_arr: np.ndarray,
     future_days: int,
     current_sentiment: float = 0.0,
+    use_stacked: bool = True,
 ) -> np.ndarray:
     """Return 7-day return predictions from the stacked ensemble for the live forecast."""
     feature_frame = build_feature_frame(df, sentiment=current_sentiment)
@@ -190,7 +440,9 @@ def _forecast_future_stacked(
     arima_ret = ((arima_prices - current) / max(current, 1e-8)).reshape(1, -1)        # (1, 7)
 
     meta_features = np.hstack([xgb_gru, arima_ret])                                   # (1, 14)
-    return predict_meta_stacker(meta_model, meta_scaler, meta_features)[0]             # (7,)
+    stacked = predict_meta_stacker(meta_model, meta_scaler, meta_features)
+    chosen = stacked if use_stacked else xgb_gru
+    return chosen[0]                                                                    # (7,)
 
 
 def run_prediction(data, future_days: int = FUTURE_DAYS, epoch_callback=None, sentiment_series=None) -> dict:
@@ -229,9 +481,29 @@ def run_prediction(data, future_days: int = FUTURE_DAYS, epoch_callback=None, se
     l0_idx = LOOKBACK + l0_end
     n_meta = meta_end - l0_end
     arima_meta_returns = _arima_walkforward_returns(close_arr, l0_idx, n_meta, future_days)
-
-    # Stacking meta-learner: learns optimal combination weights per future day
     meta_features_train = np.hstack([xgb_gru_meta, arima_meta_returns])   # (n_meta, 14)
+
+    # Select stacking only when it improves a later, untouched part of the meta window.
+    selector_split = max(8, int(n_meta * 0.70))
+    selector_split = min(selector_split, n_meta - 3)
+    selector_model, selector_scaler = train_meta_stacker(
+        meta_features_train[:selector_split],
+        y_returns[l0_end:l0_end + selector_split],
+    )
+    selector_stacked = predict_meta_stacker(
+        selector_model,
+        selector_scaler,
+        meta_features_train[selector_split:],
+    )
+    selector_target = y_returns[l0_end + selector_split:meta_end]
+    selector_base = xgb_gru_meta[selector_split:]
+    use_stacked = (
+        len(selector_target) > 0
+        and _rmse(selector_stacked, selector_target)
+        < _rmse(selector_base, selector_target) * 0.98
+    )
+
+    # Fit the selected stacker on the complete meta window for test inference.
     meta_model, meta_scaler = train_meta_stacker(
         meta_features_train, y_returns[l0_end:meta_end]
     )
@@ -252,27 +524,52 @@ def run_prediction(data, future_days: int = FUTURE_DAYS, epoch_callback=None, se
     stacked_test_returns = predict_meta_stacker(
         meta_model, meta_scaler, test_meta_features
     )                                                                       # (n_test, 7)
+    selected_test_returns = stacked_test_returns if use_stacked else xgb_gru_test
 
     # Convert return predictions → price arrays (for display and metrics)
     current_prices_test = close_arr[test_start_idx - 1 : test_start_idx + n_test - 1]
-    test_preds_7d = current_prices_test[:, None] * (1.0 + stacked_test_returns)
+    test_preds_7d = current_prices_test[:, None] * (1.0 + selected_test_returns)
     y_test = current_prices_test[:, None] * (1.0 + y_returns[meta_end:])
     test_preds = test_preds_7d[:, 0]
 
-    # ── Live forecast: next 7 trading days ────────────────────────────────
+    # The chart's final 7-day backtest is refit only on information available
+    # at that historical anchor. The last seven supervised rows are excluded
+    # because their targets were not fully known yet.
+    backtest_train_end = n - future_days
+    backtest_anchor_price = close_arr[-future_days - 1]
+    backtest_daily_returns, backtest_cv = _forecast_daily_direction_path(
+        close_arr,
+        anchor_idx=len(close_arr) - future_days - 1,
+        future_days=future_days,
+    )
+    backtest_preds_7d = backtest_anchor_price * np.cumprod(
+        1.0 + backtest_daily_returns
+    )
+
+    # Live forecast uses the same recent-weighted model, now trained on every
+    # fully observed target available today.
+    future_daily_returns, future_cv = _forecast_daily_direction_path(
+        close_arr,
+        anchor_idx=len(close_arr) - 1,
+        future_days=future_days,
+    )
+    future_preds = close_arr[-1] * np.cumprod(1.0 + future_daily_returns)
+
+    # Keep the original ensemble forecast available for diagnostics. It is not
+    # used for the displayed forecast unless it wins future validation work.
     current_sentiment = (
         float(sentiment_series.iloc[-1])
         if sentiment_series is not None and len(sentiment_series) > 0
         else 0.0
     )
-    future_returns = _forecast_future_stacked(
+    ensemble_future_returns = _forecast_future_stacked(
         df, xgb_model, xgb_scaler,
         gru_model, gru_fscaler, gru_tscaler,
         meta_model, meta_scaler,
         close_arr, future_days,
         current_sentiment=current_sentiment,
+        use_stacked=use_stacked,
     )
-    future_preds = close_arr[-1] * (1.0 + future_returns)
 
     # ── Per-model strategy metrics (rolling walk-forward CV within test set)
     xgb_test_prices     = current_prices_test[:, None] * (1.0 + xgb_test)
@@ -292,6 +589,12 @@ def run_prediction(data, future_days: int = FUTURE_DAYS, epoch_callback=None, se
         "y_test":          y_test,
         "test_start_idx":  test_start_idx,
         "train_end_idx":   LOOKBACK + l0_end,   # vertical line: where level-0 training ended
+        "backtest_preds_7d": backtest_preds_7d,
         "future_preds":    future_preds,
+        "ensemble_future_preds": close_arr[-1] * (1.0 + ensemble_future_returns),
+        "direction_cv": {
+            "backtest": backtest_cv,
+            "future": future_cv,
+        },
         "strategy_metrics": strategy_metrics,
     }

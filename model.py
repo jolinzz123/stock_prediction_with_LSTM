@@ -8,10 +8,10 @@ from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from tensorflow.keras.layers import GRU, Dense, Dropout, Input
 from tensorflow.keras.models import Sequential
 
-LOOKBACK = 60
+LOOKBACK = 45
 FUTURE_DAYS = 7
-EPOCHS = 75
-BATCH_SIZE = 16
+EPOCHS = 120
+BATCH_SIZE = 8
 
 FEATURE_COLUMNS = [
     "Open", "High", "Low", "Close", "Adj Close", "Volume",
@@ -156,7 +156,11 @@ class _ProgressCallback(tf.keras.callbacks.Callback):
         self._fn(epoch + 1, self._total)
 
 
-def train_xgboost(X_flat: np.ndarray, y_returns: np.ndarray):
+def train_xgboost(
+    X_flat: np.ndarray,
+    y_returns: np.ndarray,
+    sample_weight: np.ndarray | None = None,
+):
     """XGBoost multi-output regressor trained on return targets."""
     from xgboost import XGBRegressor
 
@@ -164,20 +168,20 @@ def train_xgboost(X_flat: np.ndarray, y_returns: np.ndarray):
     X_scaled = scaler.fit_transform(X_flat)
     model = MultiOutputRegressor(
         XGBRegressor(
-            n_estimators=300,
-            max_depth=4,
-            learning_rate=0.05,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            min_child_weight=3,
-            reg_alpha=0.1,
-            reg_lambda=1.0,
+            n_estimators=450,
+            max_depth=5,
+            learning_rate=0.03,
+            subsample=0.9,
+            colsample_bytree=0.9,
+            min_child_weight=1,
+            reg_alpha=0.0,
+            reg_lambda=0.8,
             random_state=42,
             n_jobs=1,
         ),
         n_jobs=1,
     )
-    model.fit(X_scaled, y_returns)
+    model.fit(X_scaled, y_returns, sample_weight=sample_weight)
     return model, scaler
 
 
@@ -204,17 +208,17 @@ def train_residual_gru(
 
     model = Sequential([
         Input(shape=(X_seq.shape[1], X_seq.shape[2])),
-        GRU(64, return_sequences=True),
-        Dropout(0.12),
-        GRU(32),
-        Dense(16, activation="relu"),
+        GRU(96, return_sequences=True),
+        Dropout(0.05),
+        GRU(48),
+        Dense(32, activation="relu"),
         Dense(future_days),
     ])
-    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001), loss="huber")
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0008), loss="mse")
 
     callbacks = [
-        EarlyStopping(monitor="val_loss", patience=7, restore_best_weights=True),
-        ReduceLROnPlateau(monitor="val_loss", patience=3, factor=0.5, min_lr=0.0001),
+        EarlyStopping(monitor="val_loss", patience=10, restore_best_weights=True),
+        ReduceLROnPlateau(monitor="val_loss", patience=4, factor=0.5, min_lr=0.00005),
     ]
     if epoch_callback:
         callbacks.append(_ProgressCallback(epochs, epoch_callback))
@@ -223,7 +227,7 @@ def train_residual_gru(
         scaled, y,
         epochs=epochs,
         batch_size=batch_size,
-        validation_split=0.15,
+        validation_split=0.10,
         callbacks=callbacks,
         verbose=0,
         shuffle=False,
@@ -248,7 +252,7 @@ def train_meta_stacker(meta_features: np.ndarray, meta_returns: np.ndarray):
     """
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(meta_features)
-    model = RidgeCV(alphas=np.logspace(-4, 2, 20))
+    model = RidgeCV(alphas=np.logspace(-6, 1, 16))
     model.fit(X_scaled, meta_returns)
     return model, scaler
 

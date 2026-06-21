@@ -5,7 +5,7 @@ from sklearn.metrics import mean_squared_error
 
 from data_fetcher import fetch_stock_data
 from predictor import run_prediction
-from news_analyzer import get_news_sentiment
+from news_analyzer import get_news_sentiment, get_ticker_sentiment_context
 
 
 def get_comparison_data(ticker_a, ticker_b):
@@ -47,7 +47,12 @@ def get_stock_data(ticker):
 
     try:
         if history is not None and len(history) > 0:
-            result = run_prediction(history, future_days=7)
+            sentiment_context = get_ticker_sentiment_context(ticker, history.index)
+            result = run_prediction(
+                history,
+                future_days=7,
+                sentiment_series=sentiment_context["sentiment_series"],
+            )
 
             future_preds = result.get("future_preds")
             if future_preds is not None:
@@ -71,7 +76,11 @@ def get_stock_data(ticker):
         stock_data["backtest_mse"] = None
 
     try:
-        sentiment = get_news_sentiment(ticker)
+        sentiment = (
+            sentiment_context["news_result"]
+            if history is not None and len(history) > 0 and "sentiment_context" in locals()
+            else get_news_sentiment(ticker)
+        )
         if sentiment is not None:
             stock_data["sentiment_score"] = float(sentiment.get("aggregate_score", 0.0))
         else:

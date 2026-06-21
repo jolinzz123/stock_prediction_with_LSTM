@@ -4,6 +4,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 CACHE_DIR = Path("cache")
+CACHE_VERSION = 7
 
 _ET = ZoneInfo("America/New_York")
 _MARKET_CLOSE = datetime.time(16, 0)  # 4:00 PM ET, Mon–Fri
@@ -37,13 +38,20 @@ def load(ticker: str) -> dict | None:
     if _cache_is_stale(p.stat().st_mtime):
         return None
     with open(p, "rb") as f:
-        return pickle.load(f)
+        data = pickle.load(f)
+    if not isinstance(data, dict):
+        return None
+    if data.get("__cache_version__") != CACHE_VERSION:
+        return None
+    return data
 
 
 def save(ticker: str, data: dict) -> None:
     CACHE_DIR.mkdir(exist_ok=True)
+    payload = dict(data)
+    payload["__cache_version__"] = CACHE_VERSION
     with open(_path(ticker), "wb") as f:
-        pickle.dump(data, f)
+        pickle.dump(payload, f)
 
 
 def cached_tickers() -> list[str]:
