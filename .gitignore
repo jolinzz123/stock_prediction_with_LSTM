@@ -4,3 +4,61 @@
 tests/
 __pycache__/
 cache
+*.ipynb
+*.json
+
+# ── Python virtual environments ──────────────────────────────────────────────
+python311_env/
+venv/
+.venv/
+env/
+ENV/
+
+# ── Python bytecode / cache ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# ── Distribution / packaging ──────────────────────────────────────────────────
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ── Streamlit ─────────────────────────────────────────────────────────────────
+.streamlit/secrets.toml
+
+# ── Jupyter ────────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── Environment variables / secrets ────────────────────────────────────────────
+.env
+.env.local
+*.pem
+*.key
+
+# ── Model artifacts / caches (LSTM training, yfinance, news cache) ─────────────
+*.h5
+*.keras
+*.pkl
+*.joblib
+cache/
+.cache/
+__cache__/
+
+# ── OS / editor noise ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Test / coverage ──────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/

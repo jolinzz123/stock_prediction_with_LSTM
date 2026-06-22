@@ -40,7 +40,7 @@ def compute_strategy_metrics(
     actual_next = y_test[:, 0]
 
     # Price just before each prediction window (the "known" price at signal time)
-    current_prices = close_arr[test_start_idx - 1 : test_start_idx + N - 1]
+    current_prices = close_arr[test_start_idx - 1: test_start_idx + N - 1]
 
     # --- Direction accuracy ---
     pred_dir = np.sign(pred_next - current_prices)
@@ -48,15 +48,17 @@ def compute_strategy_metrics(
     dir_acc = float(np.mean(pred_dir == actual_dir))
 
     # Naive momentum baseline: predict the same direction as the prior day's move
-    prev_prices = close_arr[test_start_idx - 2 : test_start_idx + N - 2]
+    prev_prices = close_arr[test_start_idx - 2: test_start_idx + N - 2]
     naive_dir = np.sign(current_prices - prev_prices)
     naive_acc = float(np.mean(naive_dir == actual_dir))
 
     # --- Information Coefficient (IC) ---
     # Measures whether predicted *returns* correlate with actual *returns*.
     # A model that just outputs yesterday's price has pred_return ≈ 0 → IC ≈ 0.
-    pred_return = (pred_next - current_prices) / np.maximum(current_prices, 1e-8)
-    actual_return = (actual_next - current_prices) / np.maximum(current_prices, 1e-8)
+    pred_return = (pred_next - current_prices) / \
+        np.maximum(current_prices, 1e-8)
+    actual_return = (actual_next - current_prices) / \
+        np.maximum(current_prices, 1e-8)
     if pred_return.std() > 1e-10 and actual_return.std() > 1e-10:
         ic = float(np.corrcoef(pred_return, actual_return)[0, 1])
     else:
@@ -181,16 +183,22 @@ def _forecast_future_stacked(
     X_seq = window.to_numpy().reshape(1, LOOKBACK, -1)
     X_flat = _flat_from_window(window).reshape(1, -1)
 
-    xgb_pred = predict_xgboost(xgb_model, xgb_scaler, X_flat)                        # (1, 7)
-    gru_pred = predict_residual_gru(gru_model, gru_fscaler, gru_tscaler, X_seq)       # (1, 7)
-    xgb_gru = xgb_pred + gru_pred                                                      # (1, 7)
+    xgb_pred = predict_xgboost(
+        xgb_model, xgb_scaler, X_flat)                        # (1, 7)
+    gru_pred = predict_residual_gru(
+        gru_model, gru_fscaler, gru_tscaler, X_seq)       # (1, 7)
+    # (1, 7)
+    xgb_gru = xgb_pred + gru_pred
 
     arima_prices = train_predict_arima(close_arr, future_days=future_days)
     current = close_arr[-1]
-    arima_ret = ((arima_prices - current) / max(current, 1e-8)).reshape(1, -1)        # (1, 7)
+    arima_ret = ((arima_prices - current) / max(current, 1e-8)
+                 ).reshape(1, -1)        # (1, 7)
 
-    meta_features = np.hstack([xgb_gru, arima_ret])                                   # (1, 14)
-    return predict_meta_stacker(meta_model, meta_scaler, meta_features)[0]             # (7,)
+    # (1, 14)
+    meta_features = np.hstack([xgb_gru, arima_ret])
+    # (7,)
+    return predict_meta_stacker(meta_model, meta_scaler, meta_features)[0]
 
 
 def run_prediction(data, future_days: int = FUTURE_DAYS, epoch_callback=None, sentiment_series=None) -> dict:
@@ -199,7 +207,8 @@ def run_prediction(data, future_days: int = FUTURE_DAYS, epoch_callback=None, se
         raise ValueError("Not enough historical data to train the model.")
 
     feature_frame = build_feature_frame(df, sentiment=sentiment_series)
-    X_seq, X_flat, y_returns = make_supervised_data(feature_frame, future_days=future_days)
+    X_seq, X_flat, y_returns = make_supervised_data(
+        feature_frame, future_days=future_days)
 
     close_arr = df["Close"].to_numpy(dtype=float)
     n = len(y_returns)
@@ -223,15 +232,18 @@ def run_prediction(data, future_days: int = FUTURE_DAYS, epoch_callback=None, se
 
     # ── Meta-train: generate out-of-fold predictions on the 10% meta set ──
     xgb_meta = predict_xgboost(xgb_model, xgb_scaler, X_flat[l0_end:meta_end])
-    gru_meta = predict_residual_gru(gru_model, gru_fscaler, gru_tscaler, X_seq[l0_end:meta_end])
+    gru_meta = predict_residual_gru(
+        gru_model, gru_fscaler, gru_tscaler, X_seq[l0_end:meta_end])
     xgb_gru_meta = xgb_meta + gru_meta
 
     l0_idx = LOOKBACK + l0_end
     n_meta = meta_end - l0_end
-    arima_meta_returns = _arima_walkforward_returns(close_arr, l0_idx, n_meta, future_days)
+    arima_meta_returns = _arima_walkforward_returns(
+        close_arr, l0_idx, n_meta, future_days)
 
     # Stacking meta-learner: learns optimal combination weights per future day
-    meta_features_train = np.hstack([xgb_gru_meta, arima_meta_returns])   # (n_meta, 14)
+    meta_features_train = np.hstack(
+        [xgb_gru_meta, arima_meta_returns])   # (n_meta, 14)
     meta_model, meta_scaler = train_meta_stacker(
         meta_features_train, y_returns[l0_end:meta_end]
     )
@@ -241,20 +253,23 @@ def run_prediction(data, future_days: int = FUTURE_DAYS, epoch_callback=None, se
     n_test = n - meta_end
 
     xgb_test = predict_xgboost(xgb_model, xgb_scaler, X_flat[meta_end:])
-    gru_test = predict_residual_gru(gru_model, gru_fscaler, gru_tscaler, X_seq[meta_end:])
+    gru_test = predict_residual_gru(
+        gru_model, gru_fscaler, gru_tscaler, X_seq[meta_end:])
     xgb_gru_test = xgb_test + gru_test
 
     arima_test_returns = _arima_walkforward_returns(
         close_arr, test_start_idx, n_test, future_days
     )
 
-    test_meta_features = np.hstack([xgb_gru_test, arima_test_returns])    # (n_test, 14)
+    test_meta_features = np.hstack(
+        [xgb_gru_test, arima_test_returns])    # (n_test, 14)
     stacked_test_returns = predict_meta_stacker(
         meta_model, meta_scaler, test_meta_features
     )                                                                       # (n_test, 7)
 
     # Convert return predictions → price arrays (for display and metrics)
-    current_prices_test = close_arr[test_start_idx - 1 : test_start_idx + n_test - 1]
+    current_prices_test = close_arr[test_start_idx -
+                                    1: test_start_idx + n_test - 1]
     test_preds_7d = current_prices_test[:, None] * (1.0 + stacked_test_returns)
     y_test = current_prices_test[:, None] * (1.0 + y_returns[meta_end:])
     test_preds = test_preds_7d[:, 0]
@@ -275,9 +290,10 @@ def run_prediction(data, future_days: int = FUTURE_DAYS, epoch_callback=None, se
     future_preds = close_arr[-1] * (1.0 + future_returns)
 
     # ── Per-model strategy metrics (rolling walk-forward CV within test set)
-    xgb_test_prices     = current_prices_test[:, None] * (1.0 + xgb_test)
+    xgb_test_prices = current_prices_test[:, None] * (1.0 + xgb_test)
     xgb_gru_test_prices = current_prices_test[:, None] * (1.0 + xgb_gru_test)
-    arima_test_prices   = current_prices_test[:, None] * (1.0 + arima_test_returns)
+    arima_test_prices = current_prices_test[:,
+                                            None] * (1.0 + arima_test_returns)
 
     strategy_metrics = {
         "xgb":     compute_strategy_metrics(xgb_test_prices,     y_test, close_arr, test_start_idx),
@@ -291,7 +307,8 @@ def run_prediction(data, future_days: int = FUTURE_DAYS, epoch_callback=None, se
         "test_preds_7d":   test_preds_7d,
         "y_test":          y_test,
         "test_start_idx":  test_start_idx,
-        "train_end_idx":   LOOKBACK + l0_end,   # vertical line: where level-0 training ended
+        # vertical line: where level-0 training ended
+        "train_end_idx":   LOOKBACK + l0_end,
         "future_preds":    future_preds,
         "strategy_metrics": strategy_metrics,
     }
