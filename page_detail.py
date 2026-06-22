@@ -263,9 +263,7 @@ def render_detail_page(ticker: str) -> None:
         layer="below", line_width=0,
     )
     fig3.update_layout(**chart_layout(380))
-    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
     st.plotly_chart(fig3, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
     # ── Forecast summary metrics ──────────────────────────────────────────────
     rail_header("Forecast summary")
@@ -378,19 +376,15 @@ def render_detail_page(ticker: str) -> None:
         layer="below", line_width=0,
     )
     fig2.update_layout(**chart_layout(400))
-    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
     st.plotly_chart(fig2, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("<hr/>", unsafe_allow_html=True)
 
     # ── K-line chart ─────────────────────────────────────────────────────────
     rail_header("K-line chart — OHLC with SMA overlays",
                 icon("candlestick", 13, T["text_muted"]))
-    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
     st.plotly_chart(_build_candlestick(df),
                     use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
     # ── Historical close ──────────────────────────────────────────────────────
     rail_header("Historical closing price — 2 years",
@@ -405,9 +399,7 @@ def render_detail_page(ticker: str) -> None:
         currency + "<extra></extra>",
     ))
     fig1.update_layout(**chart_layout(340))
-    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
     st.plotly_chart(fig1, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
     # ── News & sentiment ──────────────────────────────────────────────────────
     st.markdown("<hr/>", unsafe_allow_html=True)
