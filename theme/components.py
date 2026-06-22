@@ -91,18 +91,22 @@ def news_card_html(article: dict) -> str:
 """
 
 
-def signal_badge_html(signal: str) -> str:
+def signal_badge_html(rec: dict) -> str:
     T = get_tokens()
+    signal = rec["signal"]
     sig = signal.lower()
+    col = rec["color"]
+
     if "buy" in sig:
-        bg, bd, col, ico = T["badge_buy_bg"], T["badge_buy_bd"], T["accent_green"], icon(
-            "trending-up", 22, T["accent_green"])
-    elif "sell" in sig:
-        bg, bd, col, ico = T["badge_sell_bg"], T["badge_sell_bd"], T["accent_red"], icon(
-            "trending-down", 22, T["accent_red"])
+        bg, bd, ico = T["badge_buy_bg"], T["badge_buy_bd"], icon(
+            "trending-up", 22, col)
+    elif "reduce" in sig or "avoid" in sig:
+        bg, bd, ico = T["badge_sell_bg"], T["badge_sell_bd"], icon(
+            "trending-down", 22, col)
     else:
-        bg, bd, col, ico = T["badge_hold_bg"], T["badge_hold_bd"], T["accent_amber"], icon(
-            "minus", 22, T["accent_amber"])
+        bg, bd, ico = T["badge_hold_bg"], T["badge_hold_bd"], icon(
+            "minus", 22, col)
+
     return f"""
 <div class="signal-wrap">
   <div class="signal-badge" style="background:{bg};border-color:{bd};color:{col};">
@@ -171,7 +175,8 @@ def render_nav(show_back: bool = False, active_page: str = "watchlist") -> None:
             st.session_state.theme = "light" if is_dark else "dark"
             st.rerun()
 
-    st.markdown('<div style="border-bottom:1px solid ' + T["border"] + '; margin-bottom:2rem;"></div>', unsafe_allow_html=True)
+    st.markdown('<div style="border-bottom:1px solid ' +
+                T["border"] + '; margin-bottom:2rem;"></div>', unsafe_allow_html=True)
 
     # ── Row 2: Market / Compare tabs ────────────────────────────────────────
     n1, n2 = st.columns([1, 1])

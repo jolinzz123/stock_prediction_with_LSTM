@@ -89,28 +89,31 @@ def _build_recommendation_text(rec: dict, news_result: dict) -> str:
     if pos > neg and pos > neu:
         news_sent = (
             f"News flow is tilting positive — {pos} of {total} recent articles "
-            f"carry a constructive tone, which supports near-term momentum."
+            f"carry a constructive tone, with more recent articles receiving "
+            f"greater weight in the sentiment calculation."
         )
     elif neg > pos and neg > neu:
         news_sent = (
             f"News flow is cautionary — {neg} of {total} recent articles "
-            f"carry a negative tone, which weighs on the short-term outlook."
+            f"carry a negative tone. More recent news is weightd more heavily "
+            f"in the sentiment calculation, weighing on the short-term outlook."
         )
     else:
         news_sent = (
             f"News flow is mixed, with {pos} positive, {neu} neutral and {neg} negative "
-            f"articles, offering no strong directional signal from the press."
+            f"articles. Recent articles receive greater weighting, but the overall "
+            f"sentiment does not provide a strong directional signal."
         )
 
-    if "BUY" in signal:
+    if signal in ["BUY", "STRONG BUY"]:
         action_hint = "treat this as a potential entry point if your own analysis aligns"
-    elif "SELL" in signal:
+    elif signal in ["REDUCE", "AVOID"]:
         action_hint = "consider reducing exposure or waiting for a clearer reversal signal"
     else:
         action_hint = "no decisive edge in either direction; monitor for a breakout catalyst"
 
     return (
-        f"The xgboost model projects the price to <strong>{direction} {trend_str} "
+        f"The model projects the price to <strong>{direction} {trend_str} "
         f"over the next 7 trading days</strong>, while the overall combined signal "
         f"reads as <strong>{score_desc}</strong> (score {score:+.2f}). "
         f"{news_sent} "
@@ -151,7 +154,7 @@ def render_detail_page(ticker: str) -> None:
 
     if isinstance(df.index, pd.DatetimeIndex):
         if df.index.tz is not None:
-            dates = df.index.tz_localize(None)
+            dates = df.index.tz_convert(None)
         else:
             dates = df.index
     else:
@@ -388,12 +391,15 @@ def render_detail_page(ticker: str) -> None:
 
     with st.spinner("Fetching latest news and analysing sentiment…"):
         news_result = get_news_sentiment(ticker)
+        if "error" in news_result:
+            st.warning(f"News fetch error: {news_result['error']}")
         rec = generate_recommendation(
             current_price, list(future_preds), news_result)
 
-    st.markdown(signal_badge_html(rec["signal"]), unsafe_allow_html=True)
+    st.markdown(signal_badge_html(rec), unsafe_allow_html=True)
+    st.caption("Recommendation score = 70% model forecast + 30% news sentiment")
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Combined score",    f"{rec['combined_score']:+.2f}")
     c2.metric("Forecast return",   f"{rec['price_change_pct']:+.2f}%")
     c3.metric("News sentiment",    news_result["sentiment_label"])
@@ -401,6 +407,7 @@ def render_detail_page(ticker: str) -> None:
                   + news_result["neutral_count"]
                   + news_result["negative_count"])
     c4.metric("Articles analysed", str(total_arts))
+    c5.metric("Confidence", f"{news_result['sentiment_confidence']:.2f}")
 
     narrative = _build_recommendation_text(rec, news_result)
     st.markdown(
@@ -442,7 +449,7 @@ def render_detail_page(ticker: str) -> None:
     st.markdown(
         f"<div style='text-align:center;font-size:0.72rem;color:{T['text_muted']};"
         f"padding-bottom:2rem;font-family:Space Grotesk,sans-serif;'>"
-        f"Foresight · xgboost forecasting · yfinance data · Educational use only"
+        f"Foresight · stock forecasting · yfinance data · Educational use only"
         f"</div>",
         unsafe_allow_html=True,
     )
