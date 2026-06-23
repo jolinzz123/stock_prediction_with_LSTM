@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import streamlit as st
 from data_fetcher import fetch_stock_data
 from theme import get_tokens
@@ -14,25 +16,34 @@ STRIP_TICKERS = [
 ]
 
 
+def _fetch_one_strip(t: str) -> dict | None:
+    try:
+        df_t = fetch_stock_data(t, period="1mo")
+        close = df_t["Close"].values.astype(float)
+        prev = close[-2] if len(close) >= 2 else close[-1]
+        curr = close[-1]
+        pct = (curr - prev) / prev * 100
+        return {
+            "ticker": t,
+            "price": curr,
+            "pct": pct,
+            "close_arr": close[-15:],
+        }
+    except Exception:
+        return None
+
+
 @st.cache_data(ttl=300)
 def _load_strip_data():
-    rows = []
-    for t in STRIP_TICKERS:
-        try:
-            df_t = fetch_stock_data(t, period="1mo")
-            close = df_t["Close"].values.astype(float)
-            prev = close[-2] if len(close) >= 2 else close[-1]
-            curr = close[-1]
-            pct = (curr - prev) / prev * 100
-            rows.append({
-                "ticker": t,
-                "price": curr,
-                "pct": pct,
-                "close_arr": close[-15:],
-            })
-        except Exception:
-            continue
-    return rows
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        futures = {pool.submit(_fetch_one_strip, t): t for t in STRIP_TICKERS}
+        results = {}
+        for fut in as_completed(futures):
+            t = futures[fut]
+            row = fut.result()
+            if row is not None:
+                results[t] = row
+    return [results[t] for t in STRIP_TICKERS if t in results]
 
 
 def _mini_sparkline(prices, width=46, height=20, color="#2ECC71"):

@@ -42,6 +42,10 @@ def css_inputs(T: dict) -> str:
     min-height: 44px !important;
     max-height: 44px !important;
 }}
+[data-testid="stTextInput"] > div {{
+    border-radius: 10px !important;
+    padding: 0 !important;
+}}
 [data-testid="stTextInput"] input:focus {{
     border-color: {T["accent_blue"]} !important;
     box-shadow: 0 0 0 3px {T["glow_blue"]} !important;

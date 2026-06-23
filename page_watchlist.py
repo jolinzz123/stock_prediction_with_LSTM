@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import streamlit as st
 from data_fetcher import fetch_stock_data, get_stock_info
 from ticker_strip import render_ticker_strip
@@ -11,31 +13,40 @@ WATCHLIST = [
 ]
 
 
+def _fetch_one_watchlist(t: str) -> dict | None:
+    try:
+        df_w = fetch_stock_data(t, period="3mo")
+        info_w = get_stock_info(t)
+        close = df_w["Close"].values.astype(float)
+        prev = close[-2] if len(close) >= 2 else close[-1]
+        curr = close[-1]
+        return {
+            "ticker":    t,
+            "name":      info_w["name"][:26],
+            "price":     curr,
+            "chg":       curr - prev,
+            "pct":       (curr - prev) / prev * 100,
+            "open":      float(df_w["Open"].values[-1]),
+            "high":      float(df_w["High"].values[-1]),
+            "low":       float(df_w["Low"].values[-1]),
+            "prev":      prev,
+            "close_arr": close,
+        }
+    except Exception:
+        return None
+
+
 @st.cache_data(ttl=900)
 def _load_watchlist() -> list[dict]:
-    rows = []
-    for t in WATCHLIST:
-        try:
-            df_w = fetch_stock_data(t, period="3mo")
-            info_w = get_stock_info(t)
-            close = df_w["Close"].values.astype(float)
-            prev = close[-2] if len(close) >= 2 else close[-1]
-            curr = close[-1]
-            rows.append({
-                "ticker":    t,
-                "name":      info_w["name"][:26],
-                "price":     curr,
-                "chg":       curr - prev,
-                "pct":       (curr - prev) / prev * 100,
-                "open":      float(df_w["Open"].values[-1]),
-                "high":      float(df_w["High"].values[-1]),
-                "low":       float(df_w["Low"].values[-1]),
-                "prev":      prev,
-                "close_arr": close,
-            })
-        except Exception:
-            pass
-    return rows
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        futures = {pool.submit(_fetch_one_watchlist, t): t for t in WATCHLIST}
+        results = {}
+        for fut in as_completed(futures):
+            t = futures[fut]
+            row = fut.result()
+            if row is not None:
+                results[t] = row
+    return [results[t] for t in WATCHLIST if t in results]
 
 
 def _watchlist_table_html(rows: list[dict]) -> str:
