@@ -7,7 +7,12 @@ from datetime import timedelta
 from data_fetcher import fetch_stock_data, get_stock_info
 from predictor import run_prediction
 from ticker_strip import render_ticker_strip
-from news_analyzer import get_news_sentiment, generate_recommendation, extract_market_drivers
+from news_analyzer import (
+    extract_market_drivers,
+    generate_recommendation,
+    get_news_sentiment,
+    get_ticker_sentiment_context,
+)
 import cache_manager
 from theme import (
     get_tokens, icon, rail_header, chart_layout,
@@ -67,7 +72,7 @@ def _build_candlestick(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
-def _build_recommendation_text(rec: dict, news_result: dict) -> str:
+def _build_recommendation_text(rec: dict, news_result: dict, coverage_note: str = "") -> str:
     signal = rec["signal"]
     price_pct = rec["price_change_pct"]
     score = rec["combined_score"]
@@ -76,8 +81,14 @@ def _build_recommendation_text(rec: dict, news_result: dict) -> str:
     neu = news_result["neutral_count"]
     total = pos + neg + neu or 1
 
-    direction = "rise" if price_pct > 0 else "fall"
-    trend_str = f"{'up' if price_pct > 0 else 'down'} {abs(price_pct):.1f}%"
+    abs_pct = abs(price_pct)
+    if abs_pct < 0.05:
+        price_phrase = "minimal price movement (<b>~0%</b>)"
+    elif price_pct > 0:
+        price_phrase = f"a rise of <b>+{abs_pct:.1f}%</b>"
+    else:
+        price_phrase = f"a decline of <b>−{abs_pct:.1f}%</b>"
+
     score_desc = (
         "strongly bullish" if score > 0.5 else
         "moderately bullish" if score > 0.15 else
@@ -86,39 +97,57 @@ def _build_recommendation_text(rec: dict, news_result: dict) -> str:
         "strongly bearish"
     )
 
-    if pos > neg and pos > neu:
+    if total == 0:
+        news_sent = "No recent news articles were found for this ticker."
+    elif total < 4:
         news_sent = (
-            f"News flow is tilting positive — {pos} of {total} recent articles "
-            f"carry a constructive tone, with more recent articles receiving "
-            f"greater weight in the sentiment calculation."
+            f"Only {total} recent article{'s' if total > 1 else ''} found — "
+            f"sentiment data is thin; the price forecast carries more weight here."
+        )
+    elif pos > neg and pos > neu:
+        news_sent = (
+            f"News flow leans positive — {pos} of {total} recent articles "
+            f"carry a constructive tone, supporting near-term momentum."
         )
     elif neg > pos and neg > neu:
         news_sent = (
             f"News flow is cautionary — {neg} of {total} recent articles "
-            f"carry a negative tone. More recent news is weightd more heavily "
-            f"in the sentiment calculation, weighing on the short-term outlook."
+            f"carry a negative tone, which weighs on the short-term outlook."
+        )
+    elif pos > neg:
+        news_sent = (
+            f"News flow is mixed but slightly positive ({pos} positive, "
+            f"{neu} neutral, {neg} negative) — no strong directional signal."
+        )
+    elif neg > pos:
+        news_sent = (
+            f"News flow is mixed but slightly negative ({neg} negative, "
+            f"{neu} neutral, {pos} positive) — no strong directional signal."
         )
     else:
         news_sent = (
-            f"News flow is mixed, with {pos} positive, {neu} neutral and {neg} negative "
-            f"articles. Recent articles receive greater weighting, but the overall "
-            f"sentiment does not provide a strong directional signal."
+            f"News flow is evenly mixed, with {pos} positive, {neu} neutral and {neg} negative — offering no clear directional edge."
         )
 
-    if signal in ["BUY", "STRONG BUY"]:
-        action_hint = "treat this as a potential entry point if your own analysis aligns"
-    elif signal in ["REDUCE", "AVOID"]:
-        action_hint = "consider reducing exposure or waiting for a clearer reversal signal"
-    else:
-        action_hint = "no decisive edge in either direction; monitor for a breakout catalyst"
+    if signal == "STRONG BUY":
+        action = "both the forecast and sentiment align bullishly — a high-conviction entry signal"
+    elif signal == "BUY":
+        action = "conditions favour an entry; confirm with your own analysis before acting"
+    elif signal == "HOLD":
+        action = "no decisive edge either way — wait for a stronger catalyst before committing"
+    elif signal == "REDUCE":
+        action = "consider trimming exposure and reassessing if conditions deteriorate further"
+    else:  # AVOID
+        action = "both signals are bearish — avoid new positions until the outlook improves"
 
+    coverage_str = f" {coverage_note}" if coverage_note else ""
     return (
-        f"The model projects the price to <strong>{direction} {trend_str} "
-        f"over the next 7 trading days</strong>, while the overall combined signal "
-        f"reads as <strong>{score_desc}</strong> (score {score:+.2f}). "
+        f"The model projects {price_phrase} over the next 7 trading days, "
+        f"with the combined signal reading as <strong>{score_desc}</strong> "
+        f"(score {score:+.2f}). "
         f"{news_sent} "
-        f"Taking both the quantitative forecast and the prevailing sentiment into account, "
-        f"the model issues a <strong>{signal}</strong> signal — {action_hint}."
+        f"{coverage_str}"
+        f"Signal: <strong>{signal}</strong> — {action}."
     )
 
 
@@ -127,17 +156,14 @@ def render_detail_page(ticker: str) -> None:
     render_ticker_strip()
     render_nav(show_back=True)
 
-    if st.button("← Back to watchlist", key="back_btn", type="secondary"):
-        st.session_state.page = "watchlist"
-        st.session_state.selected_ticker = None
-        st.rerun()
-
     # ── Load data / cache ────────────────────────────────────────────────────
     cached = cache_manager.load(ticker)
+    news_result = None
     if cached:
         df = cached["df"]
         info = cached["info"]
         result = cached["result"]
+        news_result = cached.get("news_result")
     else:
         with st.spinner(f"Fetching 2-year data for {ticker}…"):
             try:
@@ -147,14 +173,39 @@ def render_detail_page(ticker: str) -> None:
                 st.error(str(e))
                 return
 
-        result = run_prediction(df, future_days=7)
-        cache_manager.save(ticker, {"df": df, "info": info, "result": result})
+        sentiment_context = get_ticker_sentiment_context(ticker, df.index)
+        news_result = sentiment_context["news_result"]
+
+        progress_bar = st.progress(0)
+        progress_text = st.empty()
+
+        def _on_epoch(epoch, total):
+            progress_bar.progress(epoch / total)
+            progress_text.caption(f"Training model... epoch {epoch}/{total}")
+
+        result = run_prediction(
+            df,
+            future_days=7,
+            epoch_callback=_on_epoch,
+            sentiment_series=sentiment_context["sentiment_series"],
+        )
+        progress_bar.empty()
+        progress_text.empty()
+        cache_manager.save(
+            ticker,
+            {
+                "df": df,
+                "info": info,
+                "result": result,
+                "news_result": news_result,
+            },
+        )
 
     prices = df["Close"].to_numpy(dtype=float)
 
     if isinstance(df.index, pd.DatetimeIndex):
         if df.index.tz is not None:
-            dates = df.index.tz_convert(None)
+            dates = df.index.tz_localize(None)
         else:
             dates = df.index
     else:
@@ -239,9 +290,7 @@ def render_detail_page(ticker: str) -> None:
         layer="below", line_width=0,
     )
     fig3.update_layout(**chart_layout(380))
-    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
     st.plotly_chart(fig3, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
     # ── Forecast summary metrics ──────────────────────────────────────────────
     rail_header("Forecast summary")
@@ -314,12 +363,13 @@ def render_detail_page(ticker: str) -> None:
     rail_header("Model fit — actual vs predicted",
                 icon("layers", 13, T["text_muted"]))
 
-    bt_anchor = test_start + len(test_preds) - 1
-    bt_7d_end = min(bt_anchor + 8, len(dates))
-    bt_dates_7d = dates[bt_anchor + 1: bt_7d_end]
-    if len(bt_dates_7d) < 7:
-        bt_dates_7d = pd.bdate_range(
-            start=dates[bt_anchor] + timedelta(days=1), periods=7)
+    bt_horizon = int(test_preds_7d.shape[1])
+    bt_anchor_idx = len(dates) - bt_horizon - 1
+    bt_anchor_date = dates[bt_anchor_idx]
+    bt_anchor_price = prices[bt_anchor_idx]
+    bt_dates_7d = dates[bt_anchor_idx + 1: bt_anchor_idx + 1 + bt_horizon]
+    bt_actual_7d = y_test[-1]
+    bt_pred_7d = result.get("backtest_preds_7d", test_preds_7d[-1])
 
     fig2 = go.Figure()
     fig2.add_trace(go.Scatter(
@@ -329,16 +379,16 @@ def render_detail_page(ticker: str) -> None:
         hovertemplate="<b>%{x|%b %d %Y}</b><br>%{y:.2f}<extra></extra>",
     ))
     fig2.add_trace(go.Scatter(
-        x=[dates[-1]] + list(bt_dates_7d),
-        y=[prices[-1]] + list(y_test[-1]),
+        x=[bt_anchor_date] + list(bt_dates_7d),
+        y=[bt_anchor_price] + list(bt_actual_7d),
         mode="lines+markers", name="Actual (7d)",
         line=dict(color=T["accent_blue"], width=1.6),
         marker=dict(size=6, color=T["accent_blue"]),
         hovertemplate="<b>%{x|%b %d %Y}</b><br>Actual: %{y:.2f}<extra></extra>",
     ))
     fig2.add_trace(go.Scatter(
-        x=[dates[-1]] + list(bt_dates_7d),
-        y=[prices[-1]] + list(test_preds_7d[-1]),
+        x=[bt_anchor_date] + list(bt_dates_7d),
+        y=[bt_anchor_price] + list(bt_pred_7d),
         mode="lines+markers", name="Predicted (7d)",
         line=dict(color=T["accent_green"], width=2.2, dash="dot"),
         marker=dict(size=8, symbol="circle", color=T["accent_green"],
@@ -347,25 +397,21 @@ def render_detail_page(ticker: str) -> None:
     ))
     fig2.add_shape(
         type="rect",
-        x0=dates[-1], x1=bt_dates_7d[-1],
+        x0=bt_anchor_date, x1=bt_dates_7d[-1],
         y0=0, y1=1, yref="paper",
         fillcolor=T["accent_green"], opacity=0.08,
         layer="below", line_width=0,
     )
     fig2.update_layout(**chart_layout(400))
-    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
     st.plotly_chart(fig2, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("<hr/>", unsafe_allow_html=True)
 
     # ── K-line chart ─────────────────────────────────────────────────────────
     rail_header("K-line chart — OHLC with SMA overlays",
                 icon("candlestick", 13, T["text_muted"]))
-    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
     st.plotly_chart(_build_candlestick(df),
                     use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
     # ── Historical close ──────────────────────────────────────────────────────
     rail_header("Historical closing price — 2 years",
@@ -380,9 +426,7 @@ def render_detail_page(ticker: str) -> None:
         currency + "<extra></extra>",
     ))
     fig1.update_layout(**chart_layout(340))
-    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
     st.plotly_chart(fig1, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
     # ── News & sentiment ──────────────────────────────────────────────────────
     st.markdown("<hr/>", unsafe_allow_html=True)
@@ -390,16 +434,17 @@ def render_detail_page(ticker: str) -> None:
         "newspaper", 13, T["text_muted"]))
 
     with st.spinner("Fetching latest news and analysing sentiment…"):
-        news_result = get_news_sentiment(ticker)
+        if news_result is None:
+            news_result = get_news_sentiment(ticker)
         if "error" in news_result:
-            st.warning(f"News fetch error: {news_result['error']}")
+            st.warning(
+                f"News fetch failed: {news_result['error']}. Showing empty sentiment.")
         rec = generate_recommendation(
             current_price, list(future_preds), news_result)
 
     st.markdown(signal_badge_html(rec), unsafe_allow_html=True)
-    st.caption("Recommendation score = 70% model forecast + 30% news sentiment")
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Combined score",    f"{rec['combined_score']:+.2f}")
     c2.metric("Forecast return",   f"{rec['price_change_pct']:+.2f}%")
     c3.metric("News sentiment",    news_result["sentiment_label"])
@@ -407,9 +452,17 @@ def render_detail_page(ticker: str) -> None:
                   + news_result["neutral_count"]
                   + news_result["negative_count"])
     c4.metric("Articles analysed", str(total_arts))
-    c5.metric("Confidence", f"{news_result['sentiment_confidence']:.2f}")
 
-    narrative = _build_recommendation_text(rec, news_result)
+    confidence = float(news_result.get("sentiment_confidence", 0.0))
+    conf_pct_f = min(confidence * 100, 100)
+    coverage_note = (
+        ""  # strong coverage — no need to call it out, let the news sentence speak
+        if conf_pct_f >= 60 else
+        f"Sentiment is based on a moderate sample ({total_arts} articles) — treat it as directional, not definitive."
+        if conf_pct_f >= 30 else
+        f"Only {total_arts} recent article{'s' if total_arts != 1 else ''} found — rely more on the price forecast for this signal."
+    )
+    narrative = _build_recommendation_text(rec, news_result, coverage_note)
     st.markdown(
         f'<div class="rec-box">{narrative}</div>', unsafe_allow_html=True)
 
@@ -418,19 +471,16 @@ def render_detail_page(ticker: str) -> None:
     neu_pct = news_result["neutral_count"] / total * 100
     neg_pct = news_result["negative_count"] / total * 100
 
-    # Center-point of each segment, in % of bar width, for label placement.
-    # Clamp away from the edges so short labels on tiny segments don't clip.
     pos_mid = max(6.0, min(94.0, pos_pct / 2))
     neu_mid = max(6.0, min(94.0, pos_pct + neu_pct / 2))
     neg_mid = max(6.0, min(94.0, pos_pct + neu_pct + neg_pct / 2))
 
     st.markdown(f"""
 <div style="margin:0.75rem 0 1.75rem;">
-  <div class="sbar-labels">
-    <span style="left:{pos_mid:.2f}%;">{news_result["positive_count"]} positive</span>
-    <span style="left:{neu_mid:.2f}%;">{news_result["neutral_count"]} neutral</span>
-    <span style="left:{neg_mid:.2f}%;">{news_result["negative_count"]} negative</span>
-
+  <div class="sbar-labels" style="position:relative;height:1.4rem;">
+    <span style="position:absolute;left:{pos_mid:.2f}%;transform:translateX(-50%);white-space:nowrap;">{news_result["positive_count"]} positive</span>
+    <span style="position:absolute;left:{neu_mid:.2f}%;transform:translateX(-50%);white-space:nowrap;">{news_result["neutral_count"]} neutral</span>
+    <span style="position:absolute;left:{neg_mid:.2f}%;transform:translateX(-50%);white-space:nowrap;">{news_result["negative_count"]} negative</span>
   </div>
   <div class="sbar">
     <div class="sbar-p" style="width:{pos_pct:.1f}%;"></div>
@@ -449,7 +499,7 @@ def render_detail_page(ticker: str) -> None:
     st.markdown(
         f"<div style='text-align:center;font-size:0.72rem;color:{T['text_muted']};"
         f"padding-bottom:2rem;font-family:Space Grotesk,sans-serif;'>"
-        f"Foresight · stock forecasting · yfinance data · Educational use only"
+        f"Foresight · ensemble forecasting · yfinance data · Educational use only"
         f"</div>",
         unsafe_allow_html=True,
     )
