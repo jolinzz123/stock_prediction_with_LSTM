@@ -352,12 +352,6 @@ def render_detail_page(ticker: str) -> None:
     )
     st.markdown(table_html, unsafe_allow_html=True)
 
-    st.markdown(f"""
-<div class="disclaimer">
-  {icon("alert", 13, T["accent_amber"])}
-  For educational and research purposes only — not investment advice.
-</div>
-""", unsafe_allow_html=True)
 
     # ── Actual vs predicted (60d history + last 7-day backtest window) ────────
     rail_header("Model fit — actual vs predicted",
