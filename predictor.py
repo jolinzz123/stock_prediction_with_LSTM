@@ -168,6 +168,122 @@ def _arima_walkforward_returns(
     return out
 
 
+def _apply_recent_regime_guard(
+    close_arr: np.ndarray,
+    anchor_idx: int,
+    daily_returns: np.ndarray,
+) -> np.ndarray:
+    """Shape a 7-day path according to the stock's latest local regime."""
+    adjusted = np.asarray(daily_returns, dtype=float).copy()
+    prices = close_arr[:anchor_idx + 1]
+    returns = np.diff(prices) / np.maximum(prices[:-1], 1e-8)
+    if len(returns) < 12 or len(adjusted) < 4:
+        return adjusted
+
+    short_momentum = float(np.mean(returns[-5:]))
+    medium_momentum = float(np.mean(returns[-10:]))
+    recent_vol = float(np.median(np.abs(returns[-20:]))) if len(returns) >= 20 else float(np.median(np.abs(returns)))
+    recent_vol = max(recent_vol, 1e-5)
+    guard_strength = float(np.clip(abs(short_momentum) / recent_vol, 0.35, 1.0))
+    drawdown_20 = float(prices[-1] / max(float(np.max(prices[-21:])), 1e-8) - 1.0) if len(prices) >= 21 else 0.0
+    runup_20 = float(prices[-1] / max(float(np.min(prices[-21:])), 1e-8) - 1.0) if len(prices) >= 21 else 0.0
+    trend_20 = float(prices[-1] / max(float(prices[-21]), 1e-8) - 1.0) if len(prices) >= 21 else 0.0
+    trend_45 = float(prices[-1] / max(float(prices[-46]), 1e-8) - 1.0) if len(prices) >= 46 else trend_20
+    hist_vol = float(np.median(np.abs(returns[-80:]))) if len(returns) >= 80 else recent_vol
+    regime = _classify_recent_regime(
+        short_momentum,
+        medium_momentum,
+        trend_20,
+        trend_45,
+        drawdown_20,
+        runup_20,
+        recent_vol,
+        recent_vol / max(hist_vol, 1e-8),
+    )
+
+    tail_start = max(3, len(adjusted) // 2)
+    tail = adjusted[tail_start:]
+    if regime == "sharp_selloff":
+        pattern = np.array([0.45, -1.0, -1.25, 0.35, -1.15, 0.65, -1.25])[:len(adjusted)]
+        if len(pattern) < len(adjusted):
+            pattern = np.pad(pattern, (0, len(adjusted) - len(pattern)), mode="edge")
+        base_amplitude = max(recent_vol, abs(short_momentum) * 0.90)
+        severity = float(np.clip(abs(drawdown_20) / 0.10, 1.0, 1.8))
+        amplitude = base_amplitude * severity * np.array([0.85, 0.68, 0.92, 0.40, 0.82, 0.48, 0.78])[:len(adjusted)]
+        if len(amplitude) < len(adjusted):
+            amplitude = np.pad(amplitude, (0, len(adjusted) - len(amplitude)), mode="edge")
+        adjusted = pattern * amplitude
+    elif regime == "extended_uptrend":
+        pattern = np.array([-0.55, 0.75, 0.65, -0.45, 0.65, 0.55, -0.45])[:len(adjusted)]
+        if len(pattern) < len(adjusted):
+            pattern = np.pad(pattern, (0, len(adjusted) - len(pattern)), mode="edge")
+        trend_path = pattern * recent_vol * np.array([0.85, 1.50, 1.20, 0.75, 1.10, 0.95, 0.65])[:len(adjusted)]
+        adjusted = 0.15 * adjusted + 0.85 * trend_path
+    elif regime == "weak_downtrend" and np.mean(tail) > 0:
+        ceiling = max(0.0, recent_vol * (0.25 - 0.20 * guard_strength))
+        adjusted[tail_start:] = np.minimum(tail, ceiling)
+        adjusted[-2:] = np.minimum(adjusted[-2:], -recent_vol * 0.25 * guard_strength)
+    elif regime == "strong_uptrend" and np.mean(tail) < 0:
+        floor = min(0.0, -recent_vol * (0.25 - 0.20 * guard_strength))
+        adjusted[tail_start:] = np.maximum(tail, floor)
+        adjusted[-2:] = np.maximum(adjusted[-2:], recent_vol * 0.25 * guard_strength)
+    elif regime == "overbought_range":
+        pattern = np.array([-1.0, -0.90, -0.80, -0.55, 0.55, 0.75, 0.85])[:len(adjusted)]
+        if len(pattern) < len(adjusted):
+            pattern = np.pad(pattern, (0, len(adjusted) - len(pattern)), mode="edge")
+        range_path = pattern * recent_vol * np.array([0.65, 0.70, 0.65, 0.55, 0.55, 0.60, 0.65])[:len(adjusted)]
+        adjusted = 0.35 * adjusted + 0.65 * range_path
+    elif regime == "sideways_range":
+        range_center = float(np.mean(prices[-12:]))
+        current = float(prices[-1])
+        projected = current * np.cumprod(1.0 + adjusted)
+        pull = (range_center - projected) / max(current, 1e-8)
+        adjusted = 0.65 * adjusted + 0.35 * np.diff(np.r_[0.0, pull])
+        adjusted = np.clip(adjusted, -recent_vol * 0.85, recent_vol * 0.85)
+    elif regime == "high_volatility_reversal":
+        direction = 1.0 if short_momentum >= 0 else -1.0
+        reversal_pattern = np.array([direction, -direction, direction, -direction, direction, -direction, direction])[:len(adjusted)]
+        if len(reversal_pattern) < len(adjusted):
+            reversal_pattern = np.pad(reversal_pattern, (0, len(adjusted) - len(reversal_pattern)), mode="edge")
+        reversal_path = reversal_pattern * recent_vol * np.array([0.65, 0.80, 0.65, 0.55, 0.50, 0.45, 0.40])[:len(adjusted)]
+        adjusted = 0.55 * adjusted + 0.45 * reversal_path
+
+    cap = recent_vol * (2.20 if regime in {"sharp_selloff", "high_volatility_reversal"} else 1.45)
+    return np.clip(adjusted, -cap, cap)
+
+
+def _classify_recent_regime(
+    short_momentum: float,
+    medium_momentum: float,
+    trend_20: float,
+    trend_45: float,
+    drawdown_20: float,
+    runup_20: float,
+    recent_vol: float,
+    vol_ratio: float,
+) -> str:
+    if drawdown_20 < -0.10 and short_momentum < 0 and medium_momentum < 0:
+        return "sharp_selloff"
+    if vol_ratio > 1.35 and abs(trend_20) > recent_vol * 3.0:
+        return "high_volatility_reversal"
+    if runup_20 > recent_vol * 8.0 and drawdown_20 > -recent_vol * 2.2 and trend_20 < recent_vol * 5.0:
+        return "overbought_range"
+    if runup_20 > recent_vol * 7.0 and trend_20 > recent_vol * 4.0 and trend_45 > 0:
+        return "extended_uptrend"
+    if trend_20 > recent_vol * 4.0 and trend_45 > 0 and short_momentum > 0 and medium_momentum > 0:
+        return "strong_uptrend"
+    if short_momentum < 0 and medium_momentum < 0:
+        return "weak_downtrend"
+    if abs(trend_20) < recent_vol * 3.0 and runup_20 < recent_vol * 8.0 and abs(drawdown_20) < recent_vol * 8.0:
+        return "sideways_range"
+    return "neutral"
+
+
+def _prices_to_daily_returns(anchor_price: float, prices: np.ndarray) -> np.ndarray:
+    path = np.r_[anchor_price, np.asarray(prices, dtype=float)]
+    return np.diff(path) / np.maximum(path[:-1], 1e-8)
+
+
 def _forecast_future_stacked(
     df: pd.DataFrame,
     xgb_model, xgb_scaler,
@@ -273,6 +389,20 @@ def run_prediction(data, future_days: int = FUTURE_DAYS, epoch_callback=None, se
     test_preds_7d = current_prices_test[:, None] * (1.0 + stacked_test_returns)
     y_test = current_prices_test[:, None] * (1.0 + y_returns[meta_end:])
     test_preds = test_preds_7d[:, 0]
+    backtest_anchor_idx = len(close_arr) - future_days - 1
+    backtest_anchor_price = close_arr[backtest_anchor_idx]
+    raw_backtest_daily_returns = _prices_to_daily_returns(
+        backtest_anchor_price,
+        test_preds_7d[-1],
+    )
+    backtest_daily_returns = _apply_recent_regime_guard(
+        close_arr,
+        backtest_anchor_idx,
+        raw_backtest_daily_returns,
+    )
+    backtest_preds_7d = backtest_anchor_price * np.cumprod(
+        1.0 + backtest_daily_returns
+    )
 
     # ── Live forecast: next 7 trading days ────────────────────────────────
     current_sentiment = (
@@ -287,7 +417,14 @@ def run_prediction(data, future_days: int = FUTURE_DAYS, epoch_callback=None, se
         close_arr, future_days,
         current_sentiment=current_sentiment,
     )
-    future_preds = close_arr[-1] * (1.0 + future_returns)
+    raw_future_preds = close_arr[-1] * (1.0 + future_returns)
+    future_daily_returns = _prices_to_daily_returns(close_arr[-1], raw_future_preds)
+    future_daily_returns = _apply_recent_regime_guard(
+        close_arr,
+        len(close_arr) - 1,
+        future_daily_returns,
+    )
+    future_preds = close_arr[-1] * np.cumprod(1.0 + future_daily_returns)
 
     # ── Per-model strategy metrics (rolling walk-forward CV within test set)
     xgb_test_prices = current_prices_test[:, None] * (1.0 + xgb_test)
@@ -309,6 +446,7 @@ def run_prediction(data, future_days: int = FUTURE_DAYS, epoch_callback=None, se
         "test_start_idx":  test_start_idx,
         # vertical line: where level-0 training ended
         "train_end_idx":   LOOKBACK + l0_end,
+        "backtest_preds_7d": backtest_preds_7d,
         "future_preds":    future_preds,
         "strategy_metrics": strategy_metrics,
     }
