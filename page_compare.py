@@ -214,12 +214,6 @@ def _display_compare_results(report):
         )
         st.plotly_chart(f2, use_container_width=True)
 
-    st.markdown(f"""
-<div class="disclaimer">
-  {icon("alert", 13, T["accent_amber"])}
-  For educational and research purposes only — not investment advice.
-</div>
-""", unsafe_allow_html=True)
 
 
 def render_compare_page():
