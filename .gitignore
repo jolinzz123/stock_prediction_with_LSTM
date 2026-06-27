@@ -1,5 +1,6 @@
 .venv
 .claude
+.agents
 .env
 tests/
 __pycache__/
