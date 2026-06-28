@@ -164,29 +164,19 @@ def _fast_prediction(history_df, future_days=7, sentiment_series=None):
     but trains only XGBoost, cutting runtime by 3-5× while retaining reasonable directional accuracy.
     """
     from model import (
-        LOOKBACK, build_feature_frame, make_supervised_data,
         train_xgboost, predict_xgboost,
     )
+    from data_fetcher import clean_ohlcv
+    from feature_engineer import LOOKBACK, build_feature_frame, make_supervised_data
 
-    # ---- replicate _as_price_frame (avoid importing predictor internals) ----
     if isinstance(history_df, pd.DataFrame):
-        df = history_df.copy()
+        df = clean_ohlcv(history_df.copy())
     else:
         close = np.asarray(history_df, dtype=float).reshape(-1)
-        df = pd.DataFrame({
+        df = clean_ohlcv(pd.DataFrame({
             "Open": close, "High": close, "Low": close,
             "Close": close, "Adj Close": close, "Volume": 0.0,
-        })
-
-    close_col = df["Close"].astype(float)
-    for col in ["Open", "High", "Low", "Adj Close"]:
-        if col not in df:
-            df[col] = close_col
-        df[col] = df[col].astype(float).fillna(close_col)
-    if "Volume" not in df:
-        df["Volume"] = 0.0
-    df["Volume"] = df["Volume"].astype(float).fillna(0.0)
-    df = df[["Open", "High", "Low", "Close", "Adj Close", "Volume"]].dropna(subset=["Close"])
+        }))
 
     if len(df) < LOOKBACK + 50:
         raise ValueError("Not enough historical data to train the model.")

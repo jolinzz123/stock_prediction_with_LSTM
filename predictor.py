@@ -1,11 +1,9 @@
 import numpy as np
 import pandas as pd
 
+from data_fetcher import clean_ohlcv
+from feature_engineer import LOOKBACK, FUTURE_DAYS, build_feature_frame, make_supervised_data
 from model import (
-    LOOKBACK,
-    FUTURE_DAYS,
-    build_feature_frame,
-    make_supervised_data,
     predict_xgboost,
     predict_residual_gru,
     predict_meta_stacker,
@@ -127,23 +125,12 @@ def compute_strategy_metrics(
 
 def _as_price_frame(data) -> pd.DataFrame:
     if isinstance(data, pd.DataFrame):
-        df = data.copy()
-    else:
-        close = np.asarray(data, dtype=float).reshape(-1)
-        df = pd.DataFrame({
-            "Open": close, "High": close, "Low": close,
-            "Close": close, "Adj Close": close, "Volume": 0.0,
-        })
-
-    close = df["Close"].astype(float)
-    for col in ["Open", "High", "Low", "Adj Close"]:
-        if col not in df:
-            df[col] = close
-        df[col] = df[col].astype(float).fillna(close)
-    if "Volume" not in df:
-        df["Volume"] = 0.0
-    df["Volume"] = df["Volume"].astype(float).fillna(0.0)
-    return df[["Open", "High", "Low", "Close", "Adj Close", "Volume"]].dropna(subset=["Close"])
+        return clean_ohlcv(data.copy())
+    close = np.asarray(data, dtype=float).reshape(-1)
+    return clean_ohlcv(pd.DataFrame({
+        "Open": close, "High": close, "Low": close,
+        "Close": close, "Adj Close": close, "Volume": 0.0,
+    }))
 
 
 def _flat_from_window(window: pd.DataFrame) -> np.ndarray:

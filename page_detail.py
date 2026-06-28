@@ -2,7 +2,6 @@ import datetime
 from datetime import timedelta
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
 
 from data_fetcher import fetch_stock_data, get_stock_info
 from predictor import run_prediction
@@ -14,62 +13,11 @@ from news_analyzer import (
 )
 from recommendation import generate_recommendation
 import cache_manager
+from charts import build_candlestick, build_forecast_chart, build_backtest_chart, build_history_chart
 from theme import (
-    get_tokens, icon, rail_header, chart_layout,
+    get_tokens, icon, rail_header,
     news_card_html, signal_badge_html, render_nav,
 )
-
-
-def _build_candlestick(df: pd.DataFrame) -> go.Figure:
-    T = get_tokens()
-    fig = go.Figure()
-    fig.add_trace(go.Candlestick(
-        x=df.index,
-        open=df["Open"], high=df["High"],
-        low=df["Low"],   close=df["Close"],
-        name="OHLC",
-        increasing=dict(
-            line=dict(color=T["accent_green"], width=1), fillcolor=T["accent_green"]),
-        decreasing=dict(
-            line=dict(color=T["accent_red"],   width=1), fillcolor=T["accent_red"]),
-    ))
-    sma20 = df["Close"].rolling(20).mean()
-    sma50 = df["Close"].rolling(50).mean()
-    fig.add_trace(go.Scatter(x=df.index, y=sma20, mode="lines",
-                             name="SMA 20", line=dict(color=T["accent_amber"], width=1.2)))
-    fig.add_trace(go.Scatter(x=df.index, y=sma50, mode="lines",
-                             name="SMA 50", line=dict(color="#A78BFA", width=1.2)))
-    layout = chart_layout(height=480)
-    layout.update(
-        margin=dict(l=0, r=0, t=40, b=0),
-        modebar=dict(
-            orientation="v",
-            bgcolor="rgba(0,0,0,0)",
-        ),
-        xaxis_rangeslider_visible=True,
-        xaxis_rangeselector=dict(
-            buttons=[
-                dict(count=1,  label="1M", step="month", stepmode="backward"),
-                dict(count=3,  label="3M", step="month", stepmode="backward"),
-                dict(count=6,  label="6M", step="month", stepmode="backward"),
-                dict(count=1,  label="YTD", step="year", stepmode="todate"),
-                dict(count=1,  label="1Y", step="year", stepmode="backward"),
-                dict(step="all", label="All"),
-            ],
-            bgcolor=T["bg_surface"],
-            activecolor=T["accent_blue"],
-            font=dict(color=T["text_secondary"],
-                      family="Space Grotesk", size=11),
-            y=1.06,
-        ),
-        legend=dict(
-            orientation="h", yanchor="top", y=-0.15, xanchor="center", x=0.5,
-        ),
-        hovermode="x unified",
-        dragmode="zoom",
-    )
-    fig.update_layout(**layout)
-    return fig
 
 
 def _build_recommendation_text(rec: dict, news_result: dict, coverage_note: str = "") -> str:
@@ -262,40 +210,8 @@ def render_detail_page(ticker: str) -> None:
     forecast_start = max(last_date + pd.tseries.offsets.BDay(1), today)
     future_dates = pd.bdate_range(start=forecast_start, periods=7)
 
-    fig3 = go.Figure()
-    fig3.add_trace(go.Scatter(
-        x=dates[-60:], y=prices[-60:],
-        mode="lines", name="Last 60 days",
-        line=dict(color=T["accent_blue"], width=1.6),
-        hovertemplate="<b>%{x|%b %d %Y}</b><br>%{y:.2f}<extra></extra>",
-    ))
-    # Solid green line: bridge from last historical close → first forecast dot
-    fig3.add_trace(go.Scatter(
-        x=[dates[-1], future_dates[0]],
-        y=[prices[-1], future_preds[0]],
-        mode="lines", name="7-day forecast",
-        line=dict(color=T["accent_green"], width=2.2),
-        showlegend=True, hoverinfo="skip",
-    ))
-    fig3.add_trace(go.Scatter(
-        x=list(future_dates),
-        y=list(future_preds),
-        mode="lines+markers", name="7-day forecast",
-        line=dict(color=T["accent_green"], width=2.2),
-        marker=dict(size=8, symbol="circle", color=T["accent_green"],
-                    line=dict(color=T["bg_base"], width=2)),
-        showlegend=False,
-        hovertemplate="<b>%{x|%b %d %Y}</b><br>Forecast: %{y:.2f}<extra></extra>",
-    ))
-    fig3.add_shape(
-        type="rect",
-        x0=future_dates[0], x1=future_dates[-1],
-        y0=0, y1=1, yref="paper",
-        fillcolor=T["accent_green"], opacity=0.08,
-        layer="below", line_width=0,
-    )
-    fig3.update_layout(**chart_layout(380))
-    st.plotly_chart(fig3, use_container_width=True)
+    st.plotly_chart(build_forecast_chart(dates, prices, future_dates, future_preds),
+                    use_container_width=True)
 
     # ── Forecast summary metrics ──────────────────────────────────────────────
     rail_header("Forecast summary")
@@ -369,62 +285,23 @@ def render_detail_page(ticker: str) -> None:
     bt_actual_7d = y_test[-1]
     bt_pred_7d = result.get("backtest_preds_7d", test_preds_7d[-1])
 
-    fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(
-        x=dates[-60:], y=prices[-60:],
-        mode="lines", name="Last 60 days",
-        line=dict(color=T["accent_blue"], width=1.6),
-        hovertemplate="<b>%{x|%b %d %Y}</b><br>%{y:.2f}<extra></extra>",
-    ))
-    fig2.add_trace(go.Scatter(
-        x=[bt_anchor_date] + list(bt_dates_7d),
-        y=[bt_anchor_price] + list(bt_actual_7d),
-        mode="lines+markers", name="Actual (7d)",
-        line=dict(color=T["accent_blue"], width=1.6),
-        marker=dict(size=6, color=T["accent_blue"]),
-        hovertemplate="<b>%{x|%b %d %Y}</b><br>Actual: %{y:.2f}<extra></extra>",
-    ))
-    fig2.add_trace(go.Scatter(
-        x=[bt_anchor_date] + list(bt_dates_7d),
-        y=[bt_anchor_price] + list(bt_pred_7d),
-        mode="lines+markers", name="Predicted (7d)",
-        line=dict(color=T["accent_green"], width=2.2, dash="dot"),
-        marker=dict(size=8, symbol="circle", color=T["accent_green"],
-                    line=dict(color=T["bg_base"], width=2)),
-        hovertemplate="<b>%{x|%b %d %Y}</b><br>Predicted: %{y:.2f}<extra></extra>",
-    ))
-    fig2.add_shape(
-        type="rect",
-        x0=bt_anchor_date, x1=bt_dates_7d[-1],
-        y0=0, y1=1, yref="paper",
-        fillcolor=T["accent_green"], opacity=0.08,
-        layer="below", line_width=0,
-    )
-    fig2.update_layout(**chart_layout(400))
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(build_backtest_chart(dates, prices, bt_anchor_date, bt_anchor_price,
+                                          bt_dates_7d, bt_actual_7d, bt_pred_7d),
+                    use_container_width=True)
 
     st.markdown("<hr/>", unsafe_allow_html=True)
 
     # ── K-line chart ─────────────────────────────────────────────────────────
     rail_header("K-line chart — OHLC with SMA overlays",
                 icon("candlestick", 13, T["text_muted"]))
-    st.plotly_chart(_build_candlestick(df),
+    st.plotly_chart(build_candlestick(df),
                     use_container_width=True)
 
     # ── Historical close ──────────────────────────────────────────────────────
     rail_header("Historical closing price — 2 years",
                 icon("activity", 13, T["text_muted"]))
-    fig1 = go.Figure()
-    fig1.add_trace(go.Scatter(
-        x=dates, y=prices, mode="lines", name="Close",
-        line=dict(color=T["accent_blue"], width=1.6),
-        fill="tozeroy",
-        fillcolor=f"rgba({int(T['accent_blue'][1:3],16)},{int(T['accent_blue'][3:5],16)},{int(T['accent_blue'][5:7],16)},0.07)",
-        hovertemplate="<b>%{x|%b %d %Y}</b><br>%{y:.2f} " +
-        currency + "<extra></extra>",
-    ))
-    fig1.update_layout(**chart_layout(340))
-    st.plotly_chart(fig1, use_container_width=True)
+    st.plotly_chart(build_history_chart(dates, prices, currency),
+                    use_container_width=True)
 
     # ── News & sentiment ──────────────────────────────────────────────────────
     st.markdown("<hr/>", unsafe_allow_html=True)

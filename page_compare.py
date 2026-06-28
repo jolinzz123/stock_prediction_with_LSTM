@@ -1,67 +1,14 @@
 ﻿import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
 from ticker_strip import render_ticker_strip
 from comparator import compare_stocks
-from theme import get_tokens, get_is_dark, icon, rail_header, chart_layout, render_nav
+from charts import build_radar_chart, build_compare_forecast_chart
+from theme import get_tokens, get_is_dark, icon, rail_header, render_nav
 
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _cached_compare(ticker_a, ticker_b):
     return compare_stocks(ticker_a, ticker_b)
-
-
-def _build_radar_chart(report):
-    T = get_tokens()
-    fig = go.Figure()
-    ta = report["ticker_a"]
-    tb = report["ticker_b"]
-    sc = report["scores"]
-
-    axes = ["Predicted Return", "Risk", "Confidence", "Sentiment"]
-    kv = {"predicted_return": 0, "volatility": 1,
-          "model_confidence": 2, "sentiment": 3}
-    ra, rb = [], []
-    for dk, idx in kv.items():
-        dd = sc.get(dk, {})
-        na = dd.get("norm_a", 50) or 50
-        nb = dd.get("norm_b", 50) or 50
-        ra.append(na)
-        rb.append(nb)
-    ra.append(ra[0])
-    rb.append(rb[0])
-    axes.append(axes[0])
-
-    fig.add_trace(go.Scatterpolar(
-        r=ra, theta=axes, fill="toself",
-        name=ta, line=dict(color=T["accent_blue"], width=2),
-        fillcolor=f"rgba({int(T['accent_blue'][1:3],16)},{int(T['accent_blue'][3:5],16)},{int(T['accent_blue'][5:7],16)},0.22)",
-    ))
-    fig.add_trace(go.Scatterpolar(
-        r=rb, theta=axes, fill="toself",
-        name=tb, line=dict(color=T["accent_amber"], width=2),
-        fillcolor=f"rgba({int(T['accent_amber'][1:3],16)},{int(T['accent_amber'][3:5],16)},{int(T['accent_amber'][5:7],16)},0.15)",
-    ))
-    fig.update_layout(
-        polar=dict(
-            radialaxis=dict(visible=True, range=[0, 100],
-                            tickfont=dict(family="JetBrains Mono",
-                                          size=9, color=T["text_muted"]),
-                            gridcolor=T["border"]),
-            angularaxis=dict(tickfont=dict(
-                family="Space Grotesk", size=11, color=T["text_secondary"])),
-            bgcolor=T["bg_card"],
-        ),
-        template=T["plotly_theme"], height=340,
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        margin=dict(l=50, r=50, t=50, b=80),
-        font=dict(color=T["text_secondary"]),
-        legend=dict(orientation="h", yanchor="bottom",
-                    y=1.02, xanchor="right", x=1,
-                    font=dict(color=T["text_primary"])),
-    )
-    return fig
 
 
 def _display_compare_results(report):
@@ -177,7 +124,7 @@ def _display_compare_results(report):
 
     with cr:
         rail_header("Radar comparison", icon("activity", 13, T["text_muted"]))
-        st.plotly_chart(_build_radar_chart(report), use_container_width=True)
+        st.plotly_chart(build_radar_chart(report), use_container_width=True)
 
     # ── Forecast chart ────────────────────────────────────────────────────────
     da = report["data_a"]
@@ -189,46 +136,7 @@ def _display_compare_results(report):
     if pa and pb and ha and hb:
         rail_header("30-day history + 7-day forecast",
                     icon("chart-line", 13, T["text_muted"]))
-        base_a = ha[0]
-        base_b = hb[0]
-        ha_pct = [(p / base_a - 1) * 100 for p in ha]
-        pa_pct = [(p / base_a - 1) * 100 for p in pa]
-        hb_pct = [(p / base_b - 1) * 100 for p in hb]
-        pb_pct = [(p / base_b - 1) * 100 for p in pb]
-        hist_days = list(range(1, len(ha) + 1))
-        pred_days = list(range(len(ha) + 1, len(ha) + len(pa) + 1))
-        f2 = go.Figure()
-        f2.add_trace(go.Scatter(x=hist_days, y=ha_pct,
-                                mode="lines", name=ta,
-                                line=dict(color=T["accent_blue"], width=2)))
-        f2.add_trace(go.Scatter(x=[len(ha)] + pred_days, y=[ha_pct[-1]] + pa_pct,
-                                mode="lines", showlegend=False,
-                                line=dict(color=T["accent_blue"], width=2, dash="dash")))
-        f2.add_trace(go.Scatter(x=hist_days, y=hb_pct,
-                                mode="lines", name=tb,
-                                line=dict(color=T["accent_amber"], width=2)))
-        f2.add_trace(go.Scatter(x=[len(hb)] + pred_days, y=[hb_pct[-1]] + pb_pct,
-                                mode="lines", showlegend=False,
-                                line=dict(color=T["accent_amber"], width=2, dash="dash")))
-        f2.add_vline(x=len(ha), line_dash="dot", line_color=T["text_muted"],
-                     annotation_text="Today", annotation_position="top left",
-                     annotation_font=dict(color=T["text_muted"], size=11, family="Space Grotesk"))
-        f2.add_hline(y=0, line_dash="dot",
-                     line_color=T["text_muted"], line_width=1)
-        f2.update_layout(
-            title=dict(text="30-Day History + 7-Day Forecast",
-                       font=dict(color=T["text_primary"])),
-            xaxis_title="Day", yaxis_title="Cumulative Return (%)",
-            template=T["plotly_theme"], height=340,
-            margin=dict(l=0, r=0, t=40, b=0),
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            font=dict(color=T["text_secondary"]),
-            legend=dict(orientation="h", yanchor="bottom",
-                        y=1.02, xanchor="right", x=1,
-                        font=dict(color=T["text_primary"])),
-        )
-        st.plotly_chart(f2, use_container_width=True)
+        st.plotly_chart(build_compare_forecast_chart(report), use_container_width=True)
 
 
 

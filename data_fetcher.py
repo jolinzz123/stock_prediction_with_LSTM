@@ -16,6 +16,7 @@ _SESSION.headers.update(
 
 
 def fetch_chart(ticker: str, period: str = "2y") -> dict:
+    ticker = ticker.strip().upper()
     response = _SESSION.get(
         _YAHOO_URL.format(ticker=ticker),
         params={
@@ -39,6 +40,18 @@ def fetch_chart(ticker: str, period: str = "2y") -> dict:
     return results[0]
 
 
+def clean_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
+    close = df["Close"].astype(float)
+    for col in ["Open", "High", "Low", "Adj Close"]:
+        if col not in df:
+            df[col] = close
+        df[col] = df[col].astype(float).fillna(close)
+    if "Volume" not in df:
+        df["Volume"] = 0.0
+    df["Volume"] = df["Volume"].astype(float).fillna(0.0)
+    return df[["Open", "High", "Low", "Close", "Adj Close", "Volume"]].dropna(subset=["Close"])
+
+
 def fetch_stock_data(ticker: str, period: str = "2y") -> pd.DataFrame:
     chart = fetch_chart(ticker, period)
     timestamps = chart.get("timestamp") or []
@@ -48,29 +61,30 @@ def fetch_stock_data(ticker: str, period: str = "2y") -> pd.DataFrame:
     if not timestamps or not closes:
         raise ValueError(f"No data found for ticker '{ticker}'. Please check the symbol and try again.")
 
+    n = min(len(timestamps), len(closes))
+    timestamps = timestamps[:n]
+    closes = closes[:n]
+
+    def _safe_col(lst):
+        lst = lst or []
+        return lst[:n] if len(lst) >= n else lst + [None] * (n - len(lst))
+
     df = pd.DataFrame(
         {
             "Date": pd.to_datetime(timestamps, unit="s"),
-            "Open": quote.get("open") or [],
-            "High": quote.get("high") or [],
-            "Low": quote.get("low") or [],
+            "Open": _safe_col(quote.get("open")),
+            "High": _safe_col(quote.get("high")),
+            "Low": _safe_col(quote.get("low")),
             "Close": closes,
-            "Adj Close": adj_close or closes,
-            "Volume": quote.get("volume") or [],
+            "Adj Close": _safe_col(adj_close) if adj_close else closes,
+            "Volume": _safe_col(quote.get("volume")),
         }
-    ).dropna(subset=["Close"])
-    if df.empty:
+    )
+    if df.dropna(subset=["Close"]).empty:
         raise ValueError(f"No data found for ticker '{ticker}'. Please check the symbol and try again.")
 
     df = df.set_index("Date").sort_index()
-    for col in ["Open", "High", "Low", "Adj Close"]:
-        if col not in df:
-            df[col] = df["Close"]
-        df[col] = df[col].fillna(df["Close"])
-    if "Volume" not in df:
-        df["Volume"] = 0.0
-    df["Volume"] = df["Volume"].fillna(0.0)
-    return df[["Open", "High", "Low", "Close", "Adj Close", "Volume"]]
+    return clean_ohlcv(df)
 
 
 def get_stock_info(ticker: str) -> dict:
