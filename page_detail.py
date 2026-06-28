@@ -343,25 +343,43 @@ def render_detail_page(ticker: str) -> None:
         f'<div class="rec-box">{narrative}</div>', unsafe_allow_html=True)
 
     total = total_arts or 1
-    pos_pct = news_result["positive_count"] / total * 100
-    neu_pct = news_result["neutral_count"] / total * 100
-    neg_pct = news_result["negative_count"] / total * 100
+    pos_n = news_result["positive_count"]
+    neu_n = news_result["neutral_count"]
+    neg_n = news_result["negative_count"]
+    pos_pct = pos_n / total * 100
+    neu_pct = neu_n / total * 100
+    neg_pct = neg_n / total * 100
 
-    pos_mid = max(6.0, min(94.0, pos_pct / 2))
-    neu_mid = max(6.0, min(94.0, pos_pct + neu_pct / 2))
-    neg_mid = max(6.0, min(94.0, pos_pct + neu_pct + neg_pct / 2))
+    # Build label spans only for segments that actually exist (count > 0).
+    def _label_span(count: int, word: str, left_pct: float) -> str:
+        if count == 0:
+            return ""
+        mid = max(6.0, min(94.0, left_pct))
+        return (
+            f'<span style="position:absolute;left:{mid:.2f}%;'
+            f'transform:translateX(-50%);white-space:nowrap;">'
+            f'{count} {word}</span>'
+        )
+
+    pos_mid_pct = pos_pct / 2
+    neu_mid_pct = pos_pct + neu_pct / 2
+    neg_mid_pct = pos_pct + neu_pct + neg_pct / 2
+
+    label_pos = _label_span(pos_n, "positive", pos_mid_pct)
+    label_neu = _label_span(neu_n, "neutral",  neu_mid_pct)
+    label_neg = _label_span(neg_n, "negative", neg_mid_pct)
+
+    bar_pos = f'<div class="sbar-p" style="width:{pos_pct:.1f}%;"></div>' if pos_n else ""
+    bar_neu = f'<div class="sbar-n" style="width:{neu_pct:.1f}%;"></div>' if neu_n else ""
+    bar_neg = f'<div class="sbar-e" style="width:{neg_pct:.1f}%;"></div>' if neg_n else ""
 
     st.markdown(f"""
 <div style="margin:0.75rem 0 1.75rem;">
   <div class="sbar-labels" style="position:relative;height:1.4rem;">
-    <span style="position:absolute;left:{pos_mid:.2f}%;transform:translateX(-50%);white-space:nowrap;">{news_result["positive_count"]} positive</span>
-    <span style="position:absolute;left:{neu_mid:.2f}%;transform:translateX(-50%);white-space:nowrap;">{news_result["neutral_count"]} neutral</span>
-    <span style="position:absolute;left:{neg_mid:.2f}%;transform:translateX(-50%);white-space:nowrap;">{news_result["negative_count"]} negative</span>
+    {label_pos}{label_neu}{label_neg}
   </div>
   <div class="sbar">
-    <div class="sbar-p" style="width:{pos_pct:.1f}%;"></div>
-    <div class="sbar-n" style="width:{neu_pct:.1f}%;"></div>
-    <div class="sbar-e" style="width:{neg_pct:.1f}%;"></div>
+    {bar_pos}{bar_neu}{bar_neg}
   </div>
 </div>
 """, unsafe_allow_html=True)
