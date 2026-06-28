@@ -7,8 +7,8 @@ It pulls 2 years of data from Yahoo Finance, trains an ensemble model
 generate a buy/hold/avoid recommendation.
 
 
-Requirements
-------------
+1. Requirements
+---------------
 - Python 3.10+
 - Internet connection
 - (Optional) Alpha Vantage API key for better news coverage.
@@ -17,8 +17,8 @@ Requirements
 Training is CPU-heavy (the GRU part). Expect 1-3 min per stock.
 
 
-Setup & Run
------------
+2. Setup & Run
+--------------
 1. Install dependencies:
 
     pip install -r requirements.txt
@@ -38,8 +38,8 @@ Setup & Run
     python pretrain.py
 
 
-How it works
-------------
+3. How it works
+---------------
 The pipeline goes like this:
 
   Data fetching (data_fetcher.py)
@@ -93,8 +93,8 @@ The pipeline goes like this:
     Theme tokens, CSS, icons, and the scrolling ticker bar.
 
 
-Pages
------
+4. Pages
+--------
 Watchlist (home):
   Shows 20 stocks with price, daily change, sparklines.
   Click a row to see the full analysis.
@@ -111,8 +111,8 @@ Compare page:
   forecast.
 
 
-File overview
--------------
+5. File overview
+----------------
 main.py               App entry point, page routing
 data_fetcher.py       Yahoo Finance API calls, data cleaning
 feature_engineer.py   37 technical indicators
@@ -134,8 +134,8 @@ cache/                Cached results (auto-generated)
 requirements.txt      Python dependencies
 
 
-Tech stack
-----------
+6. Tech stack
+-------------
 UI:          Streamlit
 Charts:      Plotly
 ML:          XGBoost, Keras/TensorFlow (GRU), statsmodels (ARIMA)
@@ -145,8 +145,8 @@ News:        Alpha Vantage + yfinance fallback
 Sentiment:   VADER
 
 
-Troubleshooting
----------------
+7. Troubleshooting
+------------------
 "Missing ALPHAVANTAGE_API_KEY"
   -> Set up .env (see Setup step 2). Or just ignore it,
      the app falls back to yfinance.
@@ -161,6 +161,3 @@ Training takes forever
 Port already in use
   -> streamlit run main.py --server.port 8502
 
-
-Disclaimer: this is for educational use only. Don't make real
-investment decisions based on this.
