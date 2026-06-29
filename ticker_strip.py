@@ -15,6 +15,10 @@ STRIP_TICKERS = [
     "BA", "GE",
 ]
 
+#Reference:
+#Seamless CSS marquee technique: https://css-tricks.com/seamless-scrolling-marquee/
+# Concurrent fetch pattern: Python docs, concurrent.futures
+# https://docs.python.org/3/library/concurrent.futures.html
 
 def _fetch_one_strip(t: str) -> dict | None:
     try:
