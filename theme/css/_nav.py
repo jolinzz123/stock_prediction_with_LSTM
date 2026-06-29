@@ -2,10 +2,11 @@ def css_nav(T: dict) -> str:
     return f"""
 /* ── Nav back breadcrumb ─ */
 .st-key-nav_back button {{
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    color: {T["text_muted"]} !important;
+    background: {T["bg_card"]} !important;
+    border: 1.5px solid {T["accent_blue"]}88 !important;
+    border-radius: 6px !important;
+    box-shadow: 0 0 0 1px {T["accent_blue"]}20 !important;
+    color: {T["accent_blue"]} !important;
     font-family: 'Space Grotesk', sans-serif !important;
     font-size: 0.72rem !important;
     font-weight: 500 !important;
@@ -14,19 +15,20 @@ def css_nav(T: dict) -> str:
     min-height: auto !important;
     max-height: auto !important;
     height: auto !important;
-    transition: color 0.18s !important;
+    transition: color 0.18s, border-color 0.18s, background 0.18s, box-shadow 0.18s !important;
+    cursor: pointer !important;
 }}
 .st-key-nav_back button:hover {{
     color: {T["accent_blue"]} !important;
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
+    background: {T["accent_blue"]}14 !important;
+    border-color: {T["accent_blue"]} !important;
+    box-shadow: 0 0 0 3px {T["accent_blue"]}30 !important;
 }}
 .st-key-nav_back button:focus,
 .st-key-nav_back button:active {{
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
+    background: {T["accent_blue"]}0d !important;
+    border-color: {T["accent_blue"]} !important;
+    box-shadow: 0 0 0 3px {T["accent_blue"]}25 !important;
     outline: none !important;
     color: {T["accent_blue"]} !important;
 }}

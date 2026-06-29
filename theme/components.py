@@ -147,18 +147,11 @@ def render_nav(show_back: bool = False, active_page: str = "watchlist") -> None:
         '</svg>'
     )
 
-    back_html = ""
     if show_back:
-        back_html = (
-            '<div style="margin-bottom:0.28rem;">'
-            '<span style="font-size:0.7rem;color:' + T["text_muted"] + ';'
-            'font-family:Space Grotesk,sans-serif;letter-spacing:0.04em;">'
-            '← Watchlist'
-            '</span></div>'
-        )
-
-    if back_html:
-        st.markdown(back_html, unsafe_allow_html=True)
+        if st.button("← Back", key="nav_back", type="tertiary"):
+            st.session_state.page = "watchlist"
+            st.session_state.selected_ticker = None
+            st.rerun()
 
     # ── Row 1: Logo (left) + theme toggle (right) — real same row ──────────
     col_logo, col_theme = st.columns([36, 1])

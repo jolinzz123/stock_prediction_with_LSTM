@@ -23,6 +23,7 @@ class _ProgressCallback(tf.keras.callbacks.Callback):
         self._fn(epoch + 1, self._total)
 
 
+# XGBoost multi-output regression adapted from https://xgboost.readthedocs.io/en/stable/python/python_api.html
 def train_xgboost(
     X_flat: np.ndarray,
     y_returns: np.ndarray,
@@ -56,6 +57,7 @@ def predict_xgboost(model, scaler, X_flat: np.ndarray) -> np.ndarray:
     return model.predict(scaler.transform(X_flat))
 
 
+# GRU architecture adapted from https://www.tensorflow.org/api_docs/python/tf/keras/layers/GRU
 def train_residual_gru(
     X_seq: np.ndarray,
     residuals: np.ndarray,
@@ -132,6 +134,7 @@ def predict_meta_stacker(model, scaler, meta_features: np.ndarray) -> np.ndarray
     return model.predict(scaler.transform(meta_features))
 
 
+# ARIMA forecasting adapted from https://www.statsmodels.org/stable/generated/statsmodels.tsa.arima.model.ARIMA.html
 def train_predict_arima(close_prices: np.ndarray, future_days: int = FUTURE_DAYS) -> np.ndarray:
     import warnings
     from statsmodels.tsa.arima.model import ARIMA
