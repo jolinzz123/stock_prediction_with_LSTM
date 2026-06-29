@@ -31,6 +31,7 @@ def _cache_is_stale(mtime: float) -> bool:
     return False
 
 
+# Pickle serialization reference: https://docs.python.org/3/library/pickle.html
 def load(ticker: str) -> dict | None:
     p = _path(ticker)
     if not p.exists():

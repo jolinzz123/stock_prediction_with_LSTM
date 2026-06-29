@@ -14,6 +14,11 @@ from model import (
 )
 
 
+# Evaluation references:
+# RMSE: https://scikit-learn.org/stable/modules/generated/sklearn.metrics.root_mean_squared_error.html
+# Pearson correlation (IC): https://numpy.org/doc/stable/reference/generated/numpy.corrcoef.html
+# Time-ordered validation: https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.TimeSeriesSplit.html
+# Sharpe ratio: https://rpc.cfainstitute.org/-/media/documents/code/gips/sharpe-ratio-and-the-information-ratio.pdf
 def compute_strategy_metrics(
     test_preds_7d: np.ndarray,
     y_test: np.ndarray,

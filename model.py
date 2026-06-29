@@ -118,6 +118,7 @@ def predict_residual_gru(model, feature_scaler, residual_scaler, X_seq: np.ndarr
     return residual_scaler.inverse_transform(pred_scaled.reshape(-1, 1)).reshape(n, fd)
 
 
+# RidgeCV meta-learner adapted from https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.RidgeCV.html
 def train_meta_stacker(meta_features: np.ndarray, meta_returns: np.ndarray):
     """
     Ridge meta-learner for Stacking.
