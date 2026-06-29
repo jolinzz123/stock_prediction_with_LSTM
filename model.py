@@ -66,6 +66,8 @@ def train_residual_gru(
     epoch_callback=None,
 ):
     """GRU trained on the residuals left by XGBoost (return space)."""
+    tf.keras.backend.clear_session()
+    tf.keras.utils.set_random_seed(42)
     future_days = residuals.shape[1]
 
     feature_scaler = StandardScaler()
@@ -139,8 +141,30 @@ def train_predict_arima(close_prices: np.ndarray, future_days: int = FUTURE_DAYS
     import warnings
     from statsmodels.tsa.arima.model import ARIMA
 
+    prices = np.asarray(close_prices, dtype=float).reshape(-1)
+    prices = prices[np.isfinite(prices)]
+    if len(prices) < 8:
+        return np.repeat(prices[-1], future_days)
+    prices = prices[-180:]
+
+    # Some rolling windows produce a singular Hessian for the primary order.
+    # Retry progressively simpler models before falling back to a local drift.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        result = ARIMA(close_prices, order=(5, 1, 2)).fit()
-        forecast = result.forecast(steps=future_days)
-    return np.asarray(forecast)
+        for order in ((5, 1, 2), (3, 1, 1), (2, 1, 0)):
+            try:
+                forecast = ARIMA(
+                    prices,
+                    order=order,
+                    enforce_stationarity=False,
+                    enforce_invertibility=False,
+                ).fit(method_kwargs={"maxiter": 80}).forecast(steps=future_days)
+                forecast = np.asarray(forecast, dtype=float)
+                if forecast.shape == (future_days,) and np.all(np.isfinite(forecast)):
+                    return forecast
+            except (ValueError, np.linalg.LinAlgError):
+                continue
+
+    recent = prices[-min(10, len(prices)):]
+    drift = float(np.median(np.diff(recent))) if len(recent) > 1 else 0.0
+    return prices[-1] + drift * np.arange(1, future_days + 1)

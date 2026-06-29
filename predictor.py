@@ -235,6 +235,27 @@ def _apply_recent_regime_guard(
         reversal_path = reversal_pattern * recent_vol * np.array([0.65, 0.80, 0.65, 0.55, 0.50, 0.45, 0.40])[:len(adjusted)]
         adjusted = 0.55 * adjusted + 0.45 * reversal_path
 
+    # A persistent robust trend should not be erased by a noisy mean or a
+    # regime template. The median ignores isolated jumps and only contributes
+    # when it is material relative to the stock's recent volatility.
+    robust_momentum = float(np.median(returns[-10:]))
+    robust_strength = abs(robust_momentum) / recent_vol
+    if robust_strength >= 0.20:
+        momentum_weight = float(np.clip(
+            0.35 + 0.45 * robust_strength,
+            0.35,
+            0.70,
+        ))
+        momentum_path = robust_momentum * np.linspace(
+            1.0,
+            0.65,
+            len(adjusted),
+        )
+        adjusted = (
+            (1.0 - momentum_weight) * adjusted
+            + momentum_weight * momentum_path
+        )
+
     cap = recent_vol * (2.20 if regime in {"sharp_selloff", "high_volatility_reversal"} else 1.45)
     return np.clip(adjusted, -cap, cap)
 
