@@ -84,7 +84,7 @@ def build_forecast_chart(dates, prices, future_dates, future_preds) -> go.Figure
         y=[prices[-1], future_preds[0]],
         mode="lines", name="7-day forecast",
         line=dict(color=T["accent_blue"], width=1.6),
-        showlegend=True, hoverinfo="skip",
+        showlegend=False, hoverinfo="skip",
     ))
 
     # Forecast line with circle markers
@@ -95,7 +95,7 @@ def build_forecast_chart(dates, prices, future_dates, future_preds) -> go.Figure
         line=dict(color=T["accent_green"], width=2.2),
         marker=dict(size=8, symbol="circle", color=T["accent_green"],
                     line=dict(color=T["bg_base"], width=2)),
-        showlegend=False,
+        showlegend=True,
         hovertemplate="<b>%{x|%b %d %Y}</b><br>Forecast: %{y:.2f}<extra></extra>",
     ))
 
